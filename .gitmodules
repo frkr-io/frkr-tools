@@ -1,0 +1,12 @@
+[submodule "frkr-ingest-gateway"]
+	path = frkr-ingest-gateway
+	url = https://github.com/frkr-io/frkr-ingest-gateway.git
+[submodule "frkr-streaming-gateway"]
+	path = frkr-streaming-gateway
+	url = https://github.com/frkr-io/frkr-streaming-gateway.git
+[submodule "frkr-infra-helm"]
+	path = frkr-infra-helm
+	url = https://github.com/frkr-io/frkr-infra-helm.git
+[submodule "frkr-infra-docker"]
+	path = frkr-infra-docker
+	url = https://github.com/frkr-io/frkr-infra-docker.git
