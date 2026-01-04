@@ -33,15 +33,23 @@ test-coverage: test ## Run tests with coverage report.
 ##@ Build
 
 .PHONY: build
-build: fmt vet ## Build all binaries.
+build: fmt vet build-frkrcfg build-frkrup ## Build all binaries.
+
+.PHONY: build-frkrcfg
+build-frkrcfg: ## Build frkrcfg binary.
 	@mkdir -p $(BIN_DIR)
-	@for cmd in $$(find cmd -type d -mindepth 1 -maxdepth 1 | xargs -n1 basename); do \
-		echo "Building $$cmd..."; \
-		go build -o $(BIN_DIR)/$$cmd ./cmd/$$cmd; \
-		echo "✅ Built $$cmd -> $(BIN_DIR)/$$cmd"; \
-	done
+	@echo "Building frkrcfg..."
+	@go build -o $(BIN_DIR)/frkrcfg ./cmd/frkrcfg
+	@echo "✅ Built frkrcfg -> $(BIN_DIR)/frkrcfg"
+
+.PHONY: build-frkrup
+build-frkrup: ## Build frkrup binary.
+	@mkdir -p $(BIN_DIR)
+	@echo "Building frkrup..."
+	@go build -o $(BIN_DIR)/frkrup ./cmd/frkrup
+	@echo "✅ Built frkrup -> $(BIN_DIR)/frkrup"
 	@echo ""
-	@echo "All binaries built successfully in $(BIN_DIR)/"
+	@echo "✅ All binaries built successfully in $(BIN_DIR)/"
 
 .PHONY: clean
 clean: ## Clean build artifacts.
