@@ -30,3 +30,6 @@ Thumbs.db
 /bin/
 /dist/
 
+# Binaries generated
+frkrup
+frkrcfg

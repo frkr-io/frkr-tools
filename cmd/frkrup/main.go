@@ -39,7 +39,7 @@ type Config struct {
 	MigrationsPath string
 	StreamName     string
 	CreateStream   bool
-	StartedDocker   bool // Track if we started Docker Compose
+	StartedDocker  bool // Track if we started Docker Compose
 }
 
 func main() {
@@ -127,25 +127,25 @@ func promptConfig() (*Config, error) {
 	}
 
 	// Broker configuration
-		fmt.Print("Broker host [localhost]: ")
+	fmt.Print("Broker host [localhost]: ")
 	scanner.Scan()
 	config.BrokerHost = strings.TrimSpace(scanner.Text())
 	if config.BrokerHost == "" {
 		config.BrokerHost = "localhost"
 	}
 
-		fmt.Print("Broker port [19092]: ")
+	fmt.Print("Broker port [19092]: ")
 	scanner.Scan()
 	config.BrokerPort = strings.TrimSpace(scanner.Text())
 	if config.BrokerPort == "" {
 		config.BrokerPort = "19092"
 	}
 
-		fmt.Print("Broker user (optional): ")
+	fmt.Print("Broker user (optional): ")
 	scanner.Scan()
 	config.BrokerUser = strings.TrimSpace(scanner.Text())
 
-		fmt.Print("Broker password (optional): ")
+	fmt.Print("Broker password (optional): ")
 	scanner.Scan()
 	config.BrokerPassword = strings.TrimSpace(scanner.Text())
 
@@ -204,7 +204,7 @@ func setupK8s(config *Config) error {
 		return fmt.Errorf("kubectl not connected to a cluster. Please create a cluster first (e.g., 'kind create cluster --name <cluster-name>')")
 	}
 	fmt.Println("✅ Connected to Kubernetes cluster")
-	
+
 	// Get cluster name if not provided
 	if config.K8sClusterName == "" {
 		// Try to get cluster name from kubectl context
@@ -476,10 +476,10 @@ func setupLocal(config *Config) error {
 	fmt.Println("\n🛑 Stopping gateways...")
 	killProcess(ingestCmd)
 	killProcess(streamingCmd)
-	
+
 	// Wait a moment to ensure processes are fully terminated
 	time.Sleep(500 * time.Millisecond)
-	
+
 	// Double-check and force kill any remaining processes
 	if ingestCmd != nil && ingestCmd.Process != nil {
 		ingestCmd.Process.Kill()
@@ -489,7 +489,7 @@ func setupLocal(config *Config) error {
 		streamingCmd.Process.Kill()
 		streamingCmd.Wait()
 	}
-	
+
 	fmt.Println("✅ Gateways stopped")
 	return nil
 }
@@ -549,7 +549,7 @@ func ensureInfrastructureRunning(config *Config) error {
 	fmt.Println("\n⚠️  Infrastructure services are not running.")
 	fmt.Println("   frkr-infra-docker found. Would you like to start Docker Compose?")
 	fmt.Print("   Start Docker Compose? (yes/no) [yes]: ")
-	
+
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
@@ -863,16 +863,16 @@ func killProcess(cmd *exec.Cmd) {
 		return
 	}
 	fmt.Printf("🛑 Killing process %d...\n", cmd.Process.Pid)
-	
+
 	// Try graceful shutdown first (SIGTERM)
 	cmd.Process.Signal(syscall.SIGTERM)
-	
+
 	// Wait a bit for graceful shutdown
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
 	}()
-	
+
 	select {
 	case <-done:
 		// Process exited gracefully
@@ -886,7 +886,7 @@ func killProcess(cmd *exec.Cmd) {
 
 func cleanupLocal(config *Config) {
 	fmt.Println("\n🧹 Cleaning up...")
-	
+
 	// Stop Docker Compose if we started it
 	if config.StartedDocker {
 		fmt.Println("🛑 Stopping Docker Compose services...")
@@ -899,13 +899,13 @@ func cleanupLocal(config *Config) {
 			cmd.Run() // Ignore errors - services might already be stopped
 		}
 	}
-	
+
 	// Find and kill any remaining gateway processes
 	fmt.Println("🛑 Stopping gateway processes...")
 	// Look for "go run" processes that match gateway patterns
 	cmd := exec.Command("pkill", "-f", "go run.*gateway")
 	cmd.Run() // Ignore errors - process might not exist
-	
+
 	// Also try to kill any processes on the gateway ports
 	// This is a fallback in case processes weren't properly tracked
 	cmd = exec.Command("lsof", "-ti", fmt.Sprintf(":%d", config.IngestPort))
@@ -914,14 +914,14 @@ func cleanupLocal(config *Config) {
 			exec.Command("kill", "-9", pid).Run()
 		}
 	}
-	
+
 	cmd = exec.Command("lsof", "-ti", fmt.Sprintf(":%d", config.StreamingPort))
 	if output, err := cmd.Output(); err == nil {
 		if pid := strings.TrimSpace(string(output)); pid != "" {
 			exec.Command("kill", "-9", pid).Run()
 		}
 	}
-	
+
 	fmt.Println("✅ Cleanup complete")
 }
 
