@@ -24,14 +24,8 @@ frkr-tools provides direct database and configuration access for local developme
 #### Using Makefile (Recommended)
 
 ```bash
-# Build binary to bin/frkrcfg
+# Build all binaries to bin/
 make build
-
-# Run tests
-make test
-
-# Run tests with coverage report
-make test-coverage
 
 # Format code
 make fmt
@@ -39,7 +33,7 @@ make fmt
 # Run linter
 make vet
 
-# Run all verification checks
+# Run all verification checks (fmt + vet + test)
 make verify
 
 # Clean build artifacts
@@ -49,37 +43,20 @@ make clean
 make install
 ```
 
-#### Using Build Script
+#### Alternative Build Methods
 
 ```bash
-# Build all binaries to bin/
+# Using build script
 ./build.sh
 
-# Or using Go
+# Or using Go build script
 go run build.go
-```
 
-#### Manual Build
-
-```bash
-# Build a specific binary
+# Build a specific binary manually
 go build -o bin/frkrcfg ./cmd/frkrcfg
-
-# Build all binaries (using script)
-./build.sh
-
-# Run tests
-go test ./...
-
-# Run tests with coverage
-go test ./... -coverprofile cover.out
-go tool cover -html=cover.out -o cover.html
 ```
 
-### Binary Location
-
-The build process places binaries in the `bin/` directory:
-- `bin/frkrcfg` - Main configuration tool
+**Note**: All binaries are built to the `bin/` directory.
 
 ## Installation
 
@@ -93,10 +70,8 @@ cd frkr-tools
 # If you already cloned without submodules, initialize them:
 git submodule update --init --recursive
 
-# Build
+# Build all binaries
 make build
-
-# Binary will be in bin/frkrcfg
 ```
 
 **Note**: `frkr-tools` uses git submodules for:
@@ -104,7 +79,12 @@ make build
 - `frkr-infra-helm` (required by `frkrup` for Kubernetes deployment)
 - `frkr-infra-docker` (optional, enables `frkrup` to automatically start Docker Compose services)
 
-Make sure to clone with `--recurse-submodules` or initialize submodules manually.
+**For Local Development**: If you're developing `frkr-tools` alongside `frkr-common` in a sibling directory structure (e.g., both in `~/git/frkr-io/`), you can uncomment the `replace` directive in `go.mod` to use the local version:
+
+```bash
+# Uncomment this line in go.mod:
+# replace github.com/frkr-io/frkr-common => ../frkr-common
+```
 
 ### Using go install
 
@@ -155,6 +135,9 @@ The test suite uses testcontainers to spin up a real CockroachDB instance for in
 ```bash
 # Run all tests
 make test
+
+# Run tests with coverage report
+make test-coverage
 
 # Run tests with verbose output
 go test ./... -v

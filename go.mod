@@ -78,5 +78,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// For local development, uncomment the line below:
-replace github.com/frkr-io/frkr-common => ../frkr-common
+// For local development, uncomment the line below if frkr-common is a sibling directory:
+// replace github.com/frkr-io/frkr-common => ../frkr-common
