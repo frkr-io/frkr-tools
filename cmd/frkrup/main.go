@@ -748,13 +748,8 @@ func createStream(dbURL, streamName string) (*models.Stream, error) {
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-
-	// Get the created stream to return topic name
-	// We'll query it from the database
-	// dbURL should already be in postgres:// format (CockroachDB is PostgreSQL-compatible)
-	connStr := dbURL
-
-	dbConn, err := sql.Open("postgres", connStr)
+	
+	dbConn, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
