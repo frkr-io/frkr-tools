@@ -1,6 +1,7 @@
 # Binaries (root level - should be in bin/)
-frkrcfg
-migrate
+/frkrcfg
+/migrate
+/frkrup
 *.exe
 *.exe~
 *.dll
@@ -29,7 +30,3 @@ Thumbs.db
 # Build
 /bin/
 /dist/
-
-# Binaries generated
-frkrup
-frkrcfg
