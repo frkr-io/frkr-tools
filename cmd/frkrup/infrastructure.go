@@ -197,17 +197,17 @@ func (dc *DatabaseChecker) Check(dbURL string) error {
 				// Create the frkrdb database (CockroachDB doesn't support IF NOT EXISTS)
 				fmt.Printf("🔍 [DEBUG] Creating frkrdb database...\n")
 				_, err = defaultDB.ExecContext(ctx, "CREATE DATABASE frkrdb")
-			if err != nil {
-				// If database already exists, that's fine - continue
-				if strings.Contains(err.Error(), "already exists") ||
-					strings.Contains(err.Error(), "duplicate") ||
-					strings.Contains(err.Error(), "database \"frkrdb\" already exists") {
-					fmt.Printf("🔍 [DEBUG] Database already exists, continuing...\n")
-					// Database exists, that's fine
-				} else {
-					fmt.Printf("❌ [DEBUG] Failed to create database: %v\n", err)
-					return fmt.Errorf("failed to create database: %w", err)
-				}
+				if err != nil {
+					// If database already exists, that's fine - continue
+					if strings.Contains(err.Error(), "already exists") ||
+						strings.Contains(err.Error(), "duplicate") ||
+						strings.Contains(err.Error(), "database \"frkrdb\" already exists") {
+						fmt.Printf("🔍 [DEBUG] Database already exists, continuing...\n")
+						// Database exists, that's fine
+					} else {
+						fmt.Printf("❌ [DEBUG] Failed to create database: %v\n", err)
+						return fmt.Errorf("failed to create database: %w", err)
+					}
 				} else {
 					fmt.Printf("🔍 [DEBUG] Database created successfully\n")
 				}

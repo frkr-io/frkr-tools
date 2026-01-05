@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	maxKillRetries     = 3
+	maxKillRetries          = 3
 	gracefulShutdownTimeout = 3 * time.Second
-	killRetryInterval  = 1 * time.Second
-	overallCleanupTimeout = 15 * time.Second
-	dockerCleanupTimeout = 30 * time.Second
+	killRetryInterval       = 1 * time.Second
+	overallCleanupTimeout   = 15 * time.Second
+	dockerCleanupTimeout    = 30 * time.Second
 )
 
 // CleanupManager handles cleanup operations
