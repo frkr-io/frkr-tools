@@ -201,7 +201,7 @@ func runMigrations(t *testing.T) {
 	}
 
 	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
-	
+
 	// Use frkrcfg as a subprocess for migrations
 	frkrcfgPath := filepath.Join(repoRoot, "bin", "frkrcfg")
 	if _, err := os.Stat(frkrcfgPath); os.IsNotExist(err) {
@@ -221,7 +221,7 @@ func runMigrations(t *testing.T) {
 func verifyGatewayHealth(t *testing.T, url string, timeout time.Duration) {
 	t.Helper()
 	client := &http.Client{Timeout: timeout}
-	
+
 	for i := 0; i < int(timeout.Seconds()/2); i++ {
 		resp, err := client.Get(url)
 		if err == nil && resp.StatusCode == http.StatusOK {
@@ -385,12 +385,12 @@ spec:
 	// For kind, we need to add /etc/hosts entry or use node IP directly
 	// We'll use the node IP with Host header
 	client := &http.Client{Timeout: 30 * time.Second}
-	
+
 	// Test ingest gateway
 	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/ingest/health", nodeIP), nil)
 	require.NoError(t, err)
 	req.Host = testHost
-	
+
 	t.Logf("Verifying ingest gateway via Ingress at http://%s/ingest/health (Host: %s)", nodeIP, testHost)
 	for i := 0; i < 30; i++ {
 		resp, err := client.Do(req)
@@ -411,7 +411,7 @@ spec:
 	req, err = http.NewRequest("GET", fmt.Sprintf("http://%s/streaming/health", nodeIP), nil)
 	require.NoError(t, err)
 	req.Host = testHost
-	
+
 	t.Logf("Verifying streaming gateway via Ingress at http://%s/streaming/health (Host: %s)", nodeIP, testHost)
 	for i := 0; i < 30; i++ {
 		resp, err := client.Do(req)
@@ -490,4 +490,3 @@ func TestKubernetesExternalAccess_ClusterIP(t *testing.T) {
 
 	t.Log("✅ ClusterIP test passed!")
 }
-

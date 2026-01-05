@@ -348,7 +348,7 @@ func (km *KubernetesManager) showExternalAccessInfo() {
 	// Check current service types and external IPs
 	cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.type}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
 	output, err := cmd.Output()
-	
+
 	hasLoadBalancer := false
 	if err == nil && len(output) > 0 {
 		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -479,7 +479,7 @@ func (km *KubernetesManager) configureLoadBalancer() error {
 	maxWait := 300 // 5 minutes
 	for i := 0; i < maxWait; i++ {
 		time.Sleep(2 * time.Second)
-		
+
 		// Check if both services have external IPs
 		cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
 		output, err := cmd.Output()
@@ -595,19 +595,19 @@ spec:
 	maxWait := 120 // 2 minutes
 	for i := 0; i < maxWait; i++ {
 		time.Sleep(2 * time.Second)
-		
+
 		// Try IP first
 		cmd := exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
 		output, err := cmd.Output()
 		address := strings.TrimSpace(string(output))
-		
+
 		// If no IP, try hostname (some cloud providers use hostname)
 		if address == "" {
 			cmd = exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
 			output, err = cmd.Output()
 			address = strings.TrimSpace(string(output))
 		}
-		
+
 		if err == nil && address != "" {
 			fmt.Printf("   ✅ Ingress address: %s\n", address)
 			fmt.Printf("\n📡 Gateway URLs:\n")
