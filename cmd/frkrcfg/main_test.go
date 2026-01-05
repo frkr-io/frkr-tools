@@ -35,8 +35,8 @@ func setupTestDBForCLI(t *testing.T) (*sql.DB, string) {
 	port, err := cockroachContainer.MappedPort(ctx, "26257")
 	require.NoError(t, err)
 
-	// Build connection string for migrations (cockroachdb:// format)
-	migrateURL := fmt.Sprintf("cockroachdb://%s@%s:%s/%s?sslmode=disable",
+	// Build connection string for migrations (postgres:// format - CockroachDB is PostgreSQL-compatible)
+	migrateURL := fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable",
 		connConfig.User,
 		"localhost",
 		port.Port(),

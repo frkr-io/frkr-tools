@@ -43,7 +43,8 @@ func getDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("--db-url is required")
 	}
 
-	// Convert cockroachdb:// to postgres:// for lib/pq
+	// dbURL should be in postgres:// format (CockroachDB is PostgreSQL-compatible)
+	// If someone passes cockroachdb://, convert it for backward compatibility
 	connStr := dbURL
 	if strings.HasPrefix(dbURL, "cockroachdb://") {
 		connStr = strings.Replace(dbURL, "cockroachdb://", "postgres://", 1)

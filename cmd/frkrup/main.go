@@ -17,6 +17,7 @@ import (
 	"time"
 
 	dbcommon "github.com/frkr-io/frkr-common/db"
+	"github.com/frkr-io/frkr-common/migrate"
 	"github.com/frkr-io/frkr-common/models"
 	_ "github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
@@ -694,26 +695,13 @@ func runMigrations(dbURL, migrationsPath string) error {
 		return fmt.Errorf("migrations directory not found: %s", absPath)
 	}
 
-	// Use frkrcfg migrate
-	repoRoot, err := filepath.Abs("../")
-	if err != nil {
-		return err
+	// Use migrate package directly instead of calling frkrcfg as subprocess
+	// This ensures the database drivers are properly linked
+	if err := migrate.RunMigrations(dbURL, absPath); err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
-	frkrcfgPath := filepath.Join(repoRoot, "frkr-tools", "bin", "frkrcfg")
-	if _, err := os.Stat(frkrcfgPath); os.IsNotExist(err) {
-		// Build it
-		cmd := exec.Command("go", "run", "build.go")
-		cmd.Dir = filepath.Join(repoRoot, "frkr-tools")
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to build frkrcfg: %w", err)
-		}
-	}
-
-	cmd := exec.Command(frkrcfgPath, "migrate", "--db-url", dbURL, "--migrations-path", absPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return nil
 }
 
 func runMigrationsK8s(repoRoot string) error {
@@ -726,7 +714,7 @@ func runMigrationsK8s(repoRoot string) error {
 
 	time.Sleep(2 * time.Second)
 
-	dbURL := "cockroachdb://root@localhost:26257/frkrdb?sslmode=disable"
+	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
 	migrationsPath, err := filepath.Abs(filepath.Join(repoRoot, "frkr-common", "migrations"))
 	if err != nil {
 		return err
@@ -763,10 +751,8 @@ func createStream(dbURL, streamName string) (*models.Stream, error) {
 
 	// Get the created stream to return topic name
 	// We'll query it from the database
+	// dbURL should already be in postgres:// format (CockroachDB is PostgreSQL-compatible)
 	connStr := dbURL
-	if strings.HasPrefix(dbURL, "cockroachdb://") {
-		connStr = strings.Replace(dbURL, "cockroachdb://", "postgres://", 1)
-	}
 
 	dbConn, err := sql.Open("postgres", connStr)
 	if err != nil {

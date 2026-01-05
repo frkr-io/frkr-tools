@@ -99,24 +99,24 @@ go install github.com/frkr-io/frkr-tools/cmd/frkrcfg@latest
 ```bash
 # Create a stream
 frkrcfg stream create my-api \
-  --db-url="cockroachdb://root@localhost:26257/frkr?sslmode=disable" \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --tenant="default" \
   --description="My API stream" \
   --retention-days=7
 
 # List streams
 frkrcfg stream list \
-  --db-url="cockroachdb://root@localhost:26257/frkr?sslmode=disable" \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --tenant="default"
 
 # Get stream details
 frkrcfg stream get my-api \
-  --db-url="cockroachdb://root@localhost:26257/frkr?sslmode=disable" \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --tenant="default"
 
 # Create a user
 frkrcfg user create testuser \
-  --db-url="cockroachdb://root@localhost:26257/frkr?sslmode=disable" \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --tenant="default"
 ```
 
@@ -124,7 +124,7 @@ frkrcfg user create testuser \
 
 ```bash
 frkrcfg migrate \
-  --db-url="cockroachdb://root@localhost:26257/frkr?sslmode=disable" \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --migrations-path="../../frkr-common/migrations"
 ```
 
