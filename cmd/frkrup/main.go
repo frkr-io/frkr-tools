@@ -19,6 +19,7 @@ import (
 	dbcommon "github.com/frkr-io/frkr-common/db"
 	"github.com/frkr-io/frkr-common/migrate"
 	"github.com/frkr-io/frkr-common/models"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/lib/pq"
 	"github.com/segmentio/kafka-go"
 )
