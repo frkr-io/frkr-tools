@@ -648,15 +648,32 @@ func checkDatabase(dbURL string) error {
 				return fmt.Errorf("cockroachdb not ready yet: %w", err)
 			}
 
-			// Create the frkrdb database if it doesn't exist
-			_, err = defaultDB.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS frkrdb")
+			// Create the frkrdb database (CockroachDB doesn't support IF NOT EXISTS)
+			_, err = defaultDB.ExecContext(ctx, "CREATE DATABASE frkrdb")
 			if err != nil {
-				return fmt.Errorf("failed to create database: %w", err)
+				// If database already exists, that's fine - continue
+				if strings.Contains(err.Error(), "already exists") || 
+				   strings.Contains(err.Error(), "duplicate") ||
+				   strings.Contains(err.Error(), "database \"frkrdb\" already exists") {
+					// Database exists, that's fine
+				} else {
+					return fmt.Errorf("failed to create database: %w", err)
+				}
 			}
 
-			// Now try connecting to frkrdb again
-			if err := db.PingContext(ctx); err != nil {
-				return fmt.Errorf("failed to connect to frkrdb after creation: %w", err)
+			// Wait a moment for database to be ready
+			time.Sleep(500 * time.Millisecond)
+			
+			// Now try connecting to frkrdb again with retries
+			maxRetries := 5
+			for i := 0; i < maxRetries; i++ {
+				if err := db.PingContext(ctx); err == nil {
+					break
+				}
+				if i == maxRetries-1 {
+					return fmt.Errorf("failed to connect to frkrdb after creation: %w", err)
+				}
+				time.Sleep(500 * time.Millisecond)
 			}
 		} else {
 			return err
@@ -694,6 +711,21 @@ func runMigrations(dbURL, migrationsPath string) error {
 	// Verify migrations directory exists
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		return fmt.Errorf("migrations directory not found: %s", absPath)
+	}
+
+	// Ensure database connection is valid before running migrations
+	// This helps catch connection issues early
+	testDB, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		return fmt.Errorf("invalid database URL: %w", err)
+	}
+	defer testDB.Close()
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	if err := testDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("cannot connect to database: %w", err)
 	}
 
 	// Use migrate package directly instead of calling frkrcfg as subprocess
