@@ -66,6 +66,10 @@ make build
 ./bin/frkrup
 ```
 
+**Note:** You can run `frkrup` from any terminal - it doesn't need to be the same terminal where you created the kind cluster. `frkrup` uses `kubectl` which reads from `~/.kube/config` (global configuration). Just ensure:
+- The kind cluster exists: `kind get clusters`
+- The correct kubectl context is set: `kubectl config current-context` (should show `kind-frkr` or similar)
+
 **When prompted:**
 1. **Deploy to Kubernetes?** → Type `yes`
 2. **Kubernetes cluster name** → Press Enter (auto-detected from `kind-frkr` context) or enter your cluster name
@@ -171,6 +175,23 @@ kind get clusters
 # If missing, recreate
 kind create cluster --name frkr
 ```
+
+**Wrong kubectl context?**
+```bash
+# Check current context
+kubectl config current-context
+
+# List all contexts
+kubectl config get-contexts
+
+# Switch to the correct context (e.g., kind-frkr)
+kubectl config use-context kind-frkr
+
+# Verify connection
+kubectl cluster-info
+```
+
+**Note:** `frkrup` can be run from any terminal - it uses the kubectl context from `~/.kube/config`, not terminal-specific environment variables.
 
 **Port forwarding fails?**
 - Ensure `frkrup` is still running (it maintains port forwarding)
