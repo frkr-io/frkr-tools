@@ -4,12 +4,16 @@ Local development tools for frkr.
 
 ## Purpose
 
-frkr-tools provides direct database and configuration access for local development, without requiring Kubernetes. This is separate from `frkrctl` which is k8s-focused.
+frkr-tools provides command-line tools for managing frkr:
+- **frkrcfg**: Direct database and configuration access (bypasses operator, works with any PostgreSQL-compatible database)
+- **frkrup**: Interactive setup tool for both local Docker Compose and Kubernetes deployments
+
+**Note**: For Kubernetes deployments using the operator, see [`frkr-operator`](https://github.com/frkr-io/frkr-operator) which includes `frkrctl` - a CLI tool for managing Kubernetes resources via CRDs (FrkrUser, FrkrStream, etc.).
 
 ## Tools
 
 - **frkrcfg**: Direct configuration tool (streams, tenants, users)
-- **frkrup**: Interactive setup tool for local or Kubernetes deployment
+- **frkrup**: Interactive setup tool for local Docker Compose or Kubernetes deployment
 - **migrate**: Database migration tool (integrated into frkrcfg)
 
 ## Building
@@ -94,7 +98,32 @@ go install github.com/frkr-io/frkr-tools/cmd/frkrcfg@latest
 
 ## Usage
 
-### frkrcfg
+### frkrup - Interactive Setup Tool
+
+`frkrup` is the easiest way to get frkr running. It supports both local Docker Compose and Kubernetes deployments.
+
+**Local Docker Compose Setup:**
+```bash
+./bin/frkrup
+# When prompted "Deploy to Kubernetes? (yes/no) [no]": press Enter or type "no"
+```
+
+**Kubernetes Setup:**
+```bash
+./bin/frkrup
+# When prompted "Deploy to Kubernetes? (yes/no) [no]": type "yes"
+# When prompted "Use port forwarding for local access? (yes/no) [yes]":
+#   - Type "yes" for local development (kind cluster)
+#   - Type "no" for production (managed cluster with LoadBalancer/Ingress)
+```
+
+For detailed guides, see:
+- [Quick Start Guide](QUICKSTART.md) - Local Docker Compose setup
+- [Kubernetes Quick Start Guide](K8S-QUICKSTART.md) - Kubernetes deployment
+
+### frkrcfg - Direct Configuration
+
+Use `frkrcfg` for direct database operations without going through the setup wizard:
 
 ```bash
 # Create a stream
@@ -120,13 +149,15 @@ frkrcfg user create testuser \
   --tenant="default"
 ```
 
-### migrate
+### migrate - Database Migrations
 
 ```bash
 frkrcfg migrate \
   --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
   --migrations-path="../../frkr-common/migrations"
 ```
+
+**Note:** `frkrup` automatically runs migrations during setup, so you typically don't need to run this manually.
 
 ## Testing
 
@@ -149,6 +180,30 @@ go test ./pkg/db/... -v
 go test ./pkg/db/... -v -run TestCreateStream
 ```
 
+### E2E Tests for Kubernetes
+
+End-to-end tests verify that `frkrup`'s Kubernetes external access configurations work correctly (LoadBalancer, Ingress, ClusterIP). These tests use kind clusters with MetalLB and nginx Ingress controller.
+
+**Prerequisites:** kind, kubectl, helm, Docker, and git submodules initialized
+
+```bash
+# Run all E2E tests
+make test-e2e
+
+# Or run directly
+go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess
+
+# Run specific test
+go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess_LoadBalancer
+```
+
+**What the tests verify:**
+- **LoadBalancer**: Services patched to LoadBalancer, MetalLB assigns IPs, gateways accessible via HTTP
+- **Ingress**: Ingress resource created, nginx controller routes traffic, gateways accessible via paths
+- **ClusterIP**: Services remain internal-only, verified via port-forwarding
+
+Tests are excluded from regular test runs (use `-tags=e2e`). Each test creates a kind cluster, installs required components, and verifies actual HTTP connectivity.
+
 ## Development
 
 ### Code Quality
@@ -168,7 +223,16 @@ frkr-tools/
 │   │   ├── user.go
 │   │   └── migrate.go
 │   └── frkrup/           # Interactive setup tool
-│       └── main.go
+│       ├── main.go        # Orchestration
+│       ├── config.go      # Configuration struct
+│       ├── prompt.go      # User interaction
+│       ├── paths.go       # Path resolution
+│       ├── infrastructure.go # Docker Compose & infrastructure
+│       ├── database.go    # Database operations
+│       ├── broker.go      # Broker operations
+│       ├── gateway.go     # Gateway management
+│       ├── kubernetes.go  # Kubernetes deployment
+│       └── cleanup.go     # Cleanup operations
 ├── pkg/
 │   └── db/               # Database operations
 ├── frkr-ingest-gateway/  # Git submodule
@@ -177,7 +241,9 @@ frkr-tools/
 ├── frkr-infra-docker/    # Git submodule
 ├── bin/                   # Build output (gitignored)
 ├── Makefile
-└── README.md
+├── README.md
+├── QUICKSTART.md         # Local Docker Compose guide
+└── K8S-QUICKSTART.md     # Kubernetes deployment guide
 ```
 
 ## License

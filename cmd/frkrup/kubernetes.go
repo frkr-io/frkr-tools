@@ -73,43 +73,69 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
-	// Port forward
-	portForwardCmds, err := km.setupPortForwarding()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		fmt.Println("\n🛑 Stopping port forwarding...")
-		for _, cmd := range portForwardCmds {
-			if cmd.Process != nil {
-				cmd.Process.Kill()
-			}
-		}
-	}()
-
-	// Run migrations
+	// Run migrations (uses temporary port forward for database access)
 	fmt.Println("\n🗄️  Running database migrations...")
 	if err := RunMigrationsK8s(repoRoot); err != nil {
 		return fmt.Errorf("migrations failed: %w", err)
 	}
 
-	// Verify gateways
-	fmt.Println("\n✅ Verifying gateways...")
-	time.Sleep(2 * time.Second)
-	gatewayMgr := NewGatewaysManager(km.config)
-	if err := gatewayMgr.VerifyGateways(km.config.IngestPort, km.config.StreamingPort); err != nil {
-		return fmt.Errorf("gateway verification failed: %w", err)
+	// Configure external access if requested
+	if km.config.SkipPortForward && km.config.ExternalAccess != "none" {
+		if err := km.configureExternalAccess(); err != nil {
+			return fmt.Errorf("external access configuration failed: %w", err)
+		}
 	}
 
-	fmt.Println("\n✅ frkr is running on Kubernetes!")
-	fmt.Printf("   Ingest Gateway: http://localhost:%d\n", km.config.IngestPort)
-	fmt.Printf("   Streaming Gateway: http://localhost:%d\n", km.config.StreamingPort)
-	fmt.Println("\nPress Ctrl+C to stop port forwarding and exit.")
+	// Setup port forwarding if requested (for local access)
+	var portForwardCmds []*exec.Cmd
+	if !km.config.SkipPortForward {
+		var err error
+		portForwardCmds, err = km.setupPortForwarding()
+		if err != nil {
+			return err
+		}
+		defer func() {
+			fmt.Println("\n🛑 Stopping port forwarding...")
+			for _, cmd := range portForwardCmds {
+				if cmd.Process != nil {
+					cmd.Process.Kill()
+				}
+			}
+		}()
 
-	// Wait for interrupt
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+		// Verify gateways via port forward
+		fmt.Println("\n✅ Verifying gateways...")
+		time.Sleep(2 * time.Second)
+		gatewayMgr := NewGatewaysManager(km.config)
+		if err := gatewayMgr.VerifyGateways(km.config.IngestPort, km.config.StreamingPort); err != nil {
+			return fmt.Errorf("gateway verification failed: %w", err)
+		}
+
+		fmt.Println("\n✅ frkr is running on Kubernetes!")
+		fmt.Printf("   Ingest Gateway: http://localhost:%d\n", km.config.IngestPort)
+		fmt.Printf("   Streaming Gateway: http://localhost:%d\n", km.config.StreamingPort)
+		fmt.Println("\nPress Ctrl+C to stop port forwarding and exit.")
+
+		// Wait for interrupt
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+	} else {
+		// Production mode - external access already configured if requested
+		fmt.Println("\n✅ frkr is running on Kubernetes!")
+		if km.config.ExternalAccess == "none" {
+			km.showExternalAccessInfo()
+		} else {
+			// External access was configured, show the results
+			km.showConfiguredExternalAccess()
+		}
+		fmt.Println("\n✅ Setup complete! Gateways are ready for external traffic.")
+		fmt.Println("   (Press Ctrl+C to exit)")
+		// Wait for interrupt (but don't stop anything)
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+	}
 
 	return nil
 }
@@ -194,18 +220,72 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) error {
 }
 
 func (km *KubernetesManager) installHelmChart() error {
-	fmt.Println("\n📥 Installing frkr Helm chart...")
 	helmPath, err := findInfraRepoPath("helm")
 	if err != nil {
 		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
 	}
-	helmCmd := exec.Command("helm", "install", "frkr", ".", "-f", "values-full.yaml")
+
+	// Check if release already exists
+	checkCmd := exec.Command("helm", "list", "-q", "-f", "^frkr$")
+	checkCmd.Dir = helmPath
+	output, err := checkCmd.Output()
+	releaseExists := err == nil && strings.TrimSpace(string(output)) == "frkr"
+
+	if releaseExists {
+		fmt.Println("\n📥 Upgrading existing frkr Helm chart...")
+	} else {
+		fmt.Println("\n📥 Installing frkr Helm chart...")
+	}
+
+	// Use upgrade --install to handle both install and upgrade cases
+	helmCmd := exec.Command("helm", "upgrade", "--install", "frkr", ".", "-f", "values-full.yaml")
 	helmCmd.Dir = helmPath
 	helmCmd.Stdout = os.Stdout
 	helmCmd.Stderr = os.Stderr
 	if err := helmCmd.Run(); err != nil {
-		return fmt.Errorf("helm install failed: %w", err)
+		return fmt.Errorf("helm upgrade/install failed: %w", err)
 	}
+
+	// If release existed, restart gateway deployments to pick up new images
+	if releaseExists {
+		fmt.Println("\n🔄 Restarting gateway deployments to use new images...")
+		if err := km.restartGatewayDeployments(); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to restart deployments: %v\n", err)
+			// Don't fail the whole setup, but warn the user
+		}
+	}
+
+	return nil
+}
+
+// restartGatewayDeployments restarts the gateway deployments to pick up new images
+func (km *KubernetesManager) restartGatewayDeployments() error {
+	deployments := []string{
+		"frkr-ingest-gateway",
+		"frkr-streaming-gateway",
+	}
+
+	for _, deployment := range deployments {
+		fmt.Printf("  Restarting %s...\n", deployment)
+		cmd := exec.Command("kubectl", "rollout", "restart", "deployment", deployment)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to restart %s: %w", deployment, err)
+		}
+	}
+
+	// Wait for rollouts to complete
+	fmt.Println("  Waiting for rollouts to complete...")
+	for _, deployment := range deployments {
+		cmd := exec.Command("kubectl", "rollout", "status", "deployment", deployment, "--timeout=120s")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("rollout for %s failed or timed out: %w", deployment, err)
+		}
+	}
+
 	return nil
 }
 
@@ -258,4 +338,292 @@ func (km *KubernetesManager) setupPortForwarding() ([]*exec.Cmd, error) {
 	}
 
 	return portForwardCmds, nil
+}
+
+// showExternalAccessInfo displays information about how to access gateways externally
+func (km *KubernetesManager) showExternalAccessInfo() {
+	fmt.Println("\n📡 External Access Information:")
+	fmt.Println("")
+
+	// Check current service types and external IPs
+	cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.type}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
+	output, err := cmd.Output()
+	
+	hasLoadBalancer := false
+	if err == nil && len(output) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, line := range lines {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 && parts[1] == "LoadBalancer" {
+				hasLoadBalancer = true
+				serviceName := parts[0]
+				externalIP := "<pending>"
+				if len(parts) >= 3 && parts[2] != "" {
+					externalIP = parts[2]
+				}
+				if strings.Contains(serviceName, "ingest") {
+					fmt.Printf("   ✅ Ingest Gateway (LoadBalancer): %s:8080\n", externalIP)
+				} else if strings.Contains(serviceName, "streaming") {
+					fmt.Printf("   ✅ Streaming Gateway (LoadBalancer): %s:8081\n", externalIP)
+				}
+			}
+		}
+	}
+
+	if !hasLoadBalancer {
+		fmt.Println("   The gateways are currently exposed via ClusterIP services (internal only).")
+		fmt.Println("   To enable external access, you have several options:")
+		fmt.Println("")
+		fmt.Println("   1. LoadBalancer Service (Cloud Providers):")
+		fmt.Println("      Update the service type in the Helm chart:")
+		fmt.Println("      - frkr-infra-helm/templates/ingest-gateway/service.yaml")
+		fmt.Println("      - frkr-infra-helm/templates/streaming-gateway/service.yaml")
+		fmt.Println("      Change 'type: ClusterIP' to 'type: LoadBalancer'")
+		fmt.Println("      Then run: helm upgrade frkr <helm-path>")
+		fmt.Println("")
+		fmt.Println("   2. Ingress Controller:")
+		fmt.Println("      Configure an Ingress resource pointing to:")
+		fmt.Println("      - frkr-ingest-gateway:8080")
+		fmt.Println("      - frkr-streaming-gateway:8081")
+		fmt.Println("")
+		fmt.Println("   3. NodePort (for testing):")
+		fmt.Println("      Change service type to 'NodePort' and access via <node-ip>:<node-port>")
+		fmt.Println("")
+	}
+
+	fmt.Println("   Current service endpoints (cluster-internal):")
+	fmt.Println("   - Ingest Gateway:    frkr-ingest-gateway:8080")
+	fmt.Println("   - Streaming Gateway: frkr-streaming-gateway:8081")
+	fmt.Println("")
+	fmt.Println("   To check service status:")
+	fmt.Println("   kubectl get svc -l app.kubernetes.io/name=frkr")
+}
+
+// showConfiguredExternalAccess shows information about configured external access
+func (km *KubernetesManager) showConfiguredExternalAccess() {
+	switch km.config.ExternalAccess {
+	case "loadbalancer":
+		fmt.Println("\n📡 LoadBalancer Services Configured:")
+		fmt.Println("   Checking for external IPs...")
+		cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
+		output, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+			for _, line := range lines {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					svcName := parts[0]
+					externalIP := parts[1]
+					if externalIP != "" && externalIP != "<pending>" {
+						if strings.Contains(svcName, "ingest") {
+							fmt.Printf("   ✅ Ingest Gateway:    http://%s:8080\n", externalIP)
+						} else if strings.Contains(svcName, "streaming") {
+							fmt.Printf("   ✅ Streaming Gateway: http://%s:8081\n", externalIP)
+						}
+					} else {
+						if strings.Contains(svcName, "ingest") {
+							fmt.Println("   ⏳ Ingest Gateway:    Waiting for LoadBalancer IP...")
+						} else if strings.Contains(svcName, "streaming") {
+							fmt.Println("   ⏳ Streaming Gateway: Waiting for LoadBalancer IP...")
+						}
+					}
+				}
+			}
+		}
+		fmt.Println("\n   Check status with: kubectl get svc -l app.kubernetes.io/name=frkr")
+	case "ingress":
+		fmt.Printf("\n📡 Ingress Configured:\n")
+		fmt.Printf("   Host: %s\n", km.config.IngressHost)
+		fmt.Printf("   Ingest Gateway:    http://%s/ingest\n", km.config.IngressHost)
+		fmt.Printf("   Streaming Gateway: http://%s/streaming\n", km.config.IngressHost)
+		fmt.Println("\n   Check status with: kubectl get ingress frkr-gateways")
+	}
+}
+
+// configureExternalAccess configures LoadBalancer or Ingress based on user choice
+func (km *KubernetesManager) configureExternalAccess() error {
+	switch km.config.ExternalAccess {
+	case "loadbalancer":
+		return km.configureLoadBalancer()
+	case "ingress":
+		return km.configureIngress()
+	default:
+		return nil // "none" - no configuration needed
+	}
+}
+
+// configureLoadBalancer changes service types from ClusterIP to LoadBalancer
+func (km *KubernetesManager) configureLoadBalancer() error {
+	fmt.Println("\n🔧 Configuring LoadBalancer services...")
+
+	services := []string{
+		"frkr-ingest-gateway",
+		"frkr-streaming-gateway",
+	}
+
+	for _, svcName := range services {
+		fmt.Printf("   Patching service %s to LoadBalancer...\n", svcName)
+		cmd := exec.Command("kubectl", "patch", "service", svcName, "-p", `{"spec":{"type":"LoadBalancer"}}`)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to patch service %s: %w", svcName, err)
+		}
+		fmt.Printf("   ✅ Service %s configured as LoadBalancer\n", svcName)
+	}
+
+	fmt.Println("\n⏳ Waiting for LoadBalancer IPs to be assigned...")
+	fmt.Println("   (This may take a few minutes depending on your cloud provider)")
+
+	// Wait for LoadBalancer IPs with timeout
+	maxWait := 300 // 5 minutes
+	for i := 0; i < maxWait; i++ {
+		time.Sleep(2 * time.Second)
+		
+		// Check if both services have external IPs
+		cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
+		output, err := cmd.Output()
+		if err == nil {
+			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+			allReady := true
+			for _, line := range lines {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					svcName := parts[0]
+					externalIP := parts[1]
+					if externalIP == "" || externalIP == "<pending>" {
+						allReady = false
+						break
+					}
+					if strings.Contains(svcName, "ingest") {
+						fmt.Printf("   ✅ Ingest Gateway LoadBalancer IP: %s\n", externalIP)
+					} else if strings.Contains(svcName, "streaming") {
+						fmt.Printf("   ✅ Streaming Gateway LoadBalancer IP: %s\n", externalIP)
+					}
+				}
+			}
+			if allReady && len(lines) >= 2 {
+				fmt.Println("\n✅ LoadBalancer IPs assigned successfully!")
+				return nil
+			}
+		}
+
+		if (i+1)%30 == 0 {
+			fmt.Printf("   Still waiting... (%d/%d seconds)\n", i+1, maxWait)
+		}
+	}
+
+	fmt.Println("\n⚠️  LoadBalancer IPs not assigned within timeout")
+	fmt.Println("   Services are configured as LoadBalancer - check status with:")
+	fmt.Println("   kubectl get svc -l app.kubernetes.io/name=frkr")
+	return nil // Don't fail - services are configured, just waiting for IPs
+}
+
+// configureIngress creates Ingress resources for the gateways
+func (km *KubernetesManager) configureIngress() error {
+	fmt.Println("\n🔧 Configuring Ingress...")
+
+	// Check if an Ingress controller is available and get ingressClassName
+	fmt.Println("   Checking for Ingress controller...")
+	cmd := exec.Command("kubectl", "get", "ingressclass", "-o", "jsonpath={.items[0].metadata.name}")
+	output, err := cmd.Output()
+	ingressClassName := ""
+	if err == nil && len(output) > 0 {
+		ingressClassName = strings.TrimSpace(string(output))
+		fmt.Printf("   ✅ Ingress controller detected: %s\n", ingressClassName)
+	} else {
+		fmt.Println("   ⚠️  No IngressClass found. You may need to install an Ingress controller.")
+		fmt.Println("      Common options: nginx-ingress, traefik, or cloud-specific controllers")
+		fmt.Print("   Continue anyway? (yes/no) [yes]: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if answer == "no" || answer == "n" {
+			return fmt.Errorf("ingress setup cancelled")
+		}
+		// Ask for ingressClassName manually
+		fmt.Print("   IngressClass name (optional, press Enter to skip): ")
+		scanner.Scan()
+		ingressClassName = strings.TrimSpace(scanner.Text())
+	}
+
+	// Create Ingress resource
+	ingressClassNameField := ""
+	if ingressClassName != "" {
+		ingressClassNameField = fmt.Sprintf("  ingressClassName: %s\n", ingressClassName)
+	}
+	ingressYAML := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frkr-gateways
+  labels:
+    app.kubernetes.io/name: frkr
+spec:
+%s  rules:
+  - host: %s
+    http:
+      paths:
+      - path: /ingest
+        pathType: Prefix
+        backend:
+          service:
+            name: frkr-ingest-gateway
+            port:
+              number: 8080
+      - path: /streaming
+        pathType: Prefix
+        backend:
+          service:
+            name: frkr-streaming-gateway
+            port:
+              number: 8081
+`, ingressClassNameField, km.config.IngressHost)
+
+	fmt.Printf("   Creating Ingress resource for host: %s\n", km.config.IngressHost)
+	cmd = exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(ingressYAML)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create Ingress resource: %w", err)
+	}
+
+	fmt.Println("   ✅ Ingress resource created")
+	fmt.Println("\n⏳ Waiting for Ingress to be ready...")
+
+	// Wait for Ingress to get an address (IP or hostname)
+	maxWait := 120 // 2 minutes
+	for i := 0; i < maxWait; i++ {
+		time.Sleep(2 * time.Second)
+		
+		// Try IP first
+		cmd := exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
+		output, err := cmd.Output()
+		address := strings.TrimSpace(string(output))
+		
+		// If no IP, try hostname (some cloud providers use hostname)
+		if address == "" {
+			cmd = exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
+			output, err = cmd.Output()
+			address = strings.TrimSpace(string(output))
+		}
+		
+		if err == nil && address != "" {
+			fmt.Printf("   ✅ Ingress address: %s\n", address)
+			fmt.Printf("\n📡 Gateway URLs:\n")
+			fmt.Printf("   Ingest Gateway:    http://%s/ingest\n", km.config.IngressHost)
+			fmt.Printf("   Streaming Gateway: http://%s/streaming\n", km.config.IngressHost)
+			fmt.Println("\n   Note: Ensure DNS points to the Ingress address above")
+			return nil
+		}
+
+		if (i+1)%20 == 0 {
+			fmt.Printf("   Still waiting... (%d/%d seconds)\n", i+1, maxWait)
+		}
+	}
+
+	fmt.Println("\n⚠️  Ingress address not assigned within timeout")
+	fmt.Println("   Ingress resource created - check status with:")
+	fmt.Println("   kubectl get ingress frkr-gateways")
+	return nil // Don't fail - Ingress is created, just waiting for address
 }

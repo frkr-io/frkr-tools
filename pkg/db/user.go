@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/frkr-io/frkr-common/util"
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -26,17 +27,9 @@ func CreateUser(db *sql.DB, tenantID, username, password string) (*User, error) 
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
-	if username == "" {
-		return nil, fmt.Errorf("username cannot be empty")
-	}
-	if len(username) > 100 {
-		return nil, fmt.Errorf("username cannot exceed 100 characters")
-	}
-	// Validate username format: alphanumeric, dash, underscore only
-	for _, r := range username {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
-			return nil, fmt.Errorf("username can only contain alphanumeric characters, dashes, and underscores")
-		}
+	// Use shared username validation
+	if err := util.ValidateUsername(username); err != nil {
+		return nil, err
 	}
 	if password == "" {
 		return nil, fmt.Errorf("password cannot be empty")

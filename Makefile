@@ -25,6 +25,12 @@ vet: ## Run go vet against code.
 test: ## Run tests.
 	go test ./... -v -coverprofile cover.out
 
+.PHONY: test-e2e
+test-e2e: ## Run E2E tests (requires kind, kubectl, helm, Docker).
+	@echo "Running E2E tests for Kubernetes external access..."
+	@echo "This will create a kind cluster and test LoadBalancer, Ingress, and ClusterIP configurations"
+	go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess
+
 .PHONY: test-coverage
 test-coverage: test ## Run tests with coverage report.
 	go tool cover -html=cover.out -o cover.html

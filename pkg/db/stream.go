@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/frkr-io/frkr-common/models"
+	"github.com/frkr-io/frkr-common/util"
 	"github.com/lib/pq"
 )
 
@@ -69,18 +70,16 @@ func CreateStream(db *sql.DB, tenantID, streamName, description string, retentio
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
-	if streamName == "" {
-		return nil, fmt.Errorf("stream name cannot be empty")
+	// Use shared stream name validation
+	if err := util.ValidateStreamName(streamName); err != nil {
+		return nil, err
 	}
-	if len(streamName) > 100 {
-		return nil, fmt.Errorf("stream name cannot exceed 100 characters")
+	// Normalize and validate retention days
+	normalizedDays, err := util.NormalizeRetentionDays(retentionDays)
+	if err != nil {
+		return nil, err
 	}
-	if retentionDays <= 0 {
-		return nil, fmt.Errorf("retention days must be positive")
-	}
-	if retentionDays > 365 {
-		return nil, fmt.Errorf("retention days cannot exceed 365")
-	}
+	retentionDays = normalizedDays
 
 	// Generate Redpanda topic name: stream-<tenant-id>-<stream-name>
 	// Sanitize for topic name (lowercase, replace spaces/special chars with hyphens)
@@ -98,7 +97,7 @@ func CreateStream(db *sql.DB, tenantID, streamName, description string, retentio
 
 	var stream models.Stream
 
-	err := db.QueryRow(`
+	err = db.QueryRow(`
 		INSERT INTO streams (tenant_id, name, description, retention_days, topic, status)
 		VALUES ($1, $2, $3, $4, $5, 'active')
 		RETURNING id, tenant_id, name, description, status, retention_days, topic, created_at, updated_at, deleted_at

@@ -9,6 +9,9 @@ import (
 type Config struct {
 	K8s            bool
 	K8sClusterName string
+	SkipPortForward bool // Skip port forwarding for production deployments
+	ExternalAccess string // "none", "loadbalancer", "ingress"
+	IngressHost    string // Hostname for Ingress (if using Ingress)
 	DBHost         string
 	DBPort         string
 	DBUser         string

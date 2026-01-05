@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/frkr-io/frkr-common/util"
 	"github.com/frkr-io/frkr-tools/pkg/db"
 	"github.com/spf13/cobra"
 )
@@ -21,23 +22,20 @@ var streamCreateCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		streamName := args[0]
 
-		// Validate stream name
-		if streamName == "" {
-			return fmt.Errorf("stream name cannot be empty")
-		}
-		if len(streamName) > 100 {
-			return fmt.Errorf("stream name cannot exceed 100 characters")
+		// Use shared stream name validation
+		if err := util.ValidateStreamName(streamName); err != nil {
+			return err
 		}
 
 		description, _ := cmd.Flags().GetString("description")
 		retentionDays, _ := cmd.Flags().GetInt("retention-days")
 
-		if retentionDays <= 0 {
-			retentionDays = 7
+		// Normalize and validate retention days
+		normalizedDays, err := util.NormalizeRetentionDays(retentionDays)
+		if err != nil {
+			return err
 		}
-		if retentionDays > 365 {
-			return fmt.Errorf("retention days cannot exceed 365")
-		}
+		retentionDays = normalizedDays
 
 		conn, err := getDB()
 		if err != nil {

@@ -72,20 +72,24 @@ make build
 
 **When prompted:**
 1. **Deploy to Kubernetes?** → Type `yes`
-2. **Kubernetes cluster name** → Press Enter (auto-detected from `kind-frkr` context) or enter your cluster name
+2. **Use port forwarding for local access?** → Type `yes` (for local development with kind)
+3. **Kubernetes cluster name** → Press Enter (auto-detected from `kind-frkr` context) or enter your cluster name
 
 **What happens:**
 1. `frkrup` builds Docker images for both gateways
 2. Loads images into your kind cluster
-3. Installs the Helm chart (includes CockroachDB, Redpanda, Operator, and Gateways)
-4. Waits for all pods to be ready
-5. Sets up port forwarding:
+3. Upgrades/installs the Helm chart (includes CockroachDB, Redpanda, Operator, and Gateways)
+4. If upgrading, restarts gateway deployments to use new images
+5. Waits for all pods to be ready
+6. Sets up port forwarding (if enabled):
    - Ingest Gateway: `http://localhost:8082`
    - Streaming Gateway: `http://localhost:8081`
-6. Runs database migrations
-7. Creates the default stream (`my-api`)
+7. Runs database migrations
+8. Verifies gateways are healthy
 
 **Keep this terminal open** - `frkrup` maintains port forwarding. Press `Ctrl+C` to stop port forwarding and exit (k8s resources will remain provisioned).
+
+**For Production Deployments:** When deploying to a managed Kubernetes cluster (e.g., EKS, GKE, AKS), answer "no" to port forwarding. `frkrup` will show you how to configure LoadBalancer services or Ingress for external access.
 
 ---
 

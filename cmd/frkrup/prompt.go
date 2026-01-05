@@ -25,6 +25,46 @@ func promptConfig() (*Config, error) {
 	config.K8s = answer == "yes" || answer == "y"
 
 	if config.K8s {
+		// Ask about port forwarding (skip for production/managed clusters)
+		fmt.Print("Use port forwarding for local access? (yes/no) [yes]: ")
+		scanner.Scan()
+		answer = strings.ToLower(strings.TrimSpace(scanner.Text()))
+		config.SkipPortForward = answer == "no" || answer == "n"
+
+		// Ask about external access configuration
+		if config.SkipPortForward {
+			fmt.Println("\n📡 External Access Configuration:")
+			fmt.Println("   How should gateways be exposed externally?")
+			fmt.Println("   1. LoadBalancer (cloud providers - EKS, GKE, AKS)")
+			fmt.Println("   2. Ingress (requires Ingress controller)")
+			fmt.Println("   3. None (ClusterIP only, internal access)")
+			fmt.Print("   Choose option (1/2/3) [1]: ")
+			scanner.Scan()
+			choice := strings.TrimSpace(scanner.Text())
+			if choice == "" {
+				choice = "1"
+			}
+
+			switch choice {
+			case "1":
+				config.ExternalAccess = "loadbalancer"
+			case "2":
+				config.ExternalAccess = "ingress"
+				fmt.Print("   Ingress hostname (e.g., frkr.example.com): ")
+				scanner.Scan()
+				config.IngressHost = strings.TrimSpace(scanner.Text())
+				if config.IngressHost == "" {
+					return nil, fmt.Errorf("ingress hostname is required")
+				}
+			case "3":
+				config.ExternalAccess = "none"
+			default:
+				return nil, fmt.Errorf("invalid choice: %s", choice)
+			}
+		} else {
+			config.ExternalAccess = "none" // Port forwarding, no external access needed
+		}
+
 		// Automatically determine migrations path using Go module resolution
 		migrationsPath, err := findMigrationsPath()
 		if err != nil {
