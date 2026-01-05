@@ -119,12 +119,8 @@ func promptConfig() (*Config, error) {
 	scanner.Scan()
 	config.DBPassword = strings.TrimSpace(scanner.Text())
 
-	fmt.Print("Database name [defaultdb]: ")
-	scanner.Scan()
-	config.DBName = strings.TrimSpace(scanner.Text())
-	if config.DBName == "" {
-		config.DBName = "defaultdb"
-	}
+	// Database name is hard-coded to "frkrdb" to match gateways and other components
+	config.DBName = "frkrdb"
 
 	// Broker configuration
 	fmt.Print("Broker host [localhost]: ")
@@ -571,15 +567,41 @@ func ensureInfrastructureRunning(config *Config) error {
 
 	// Wait for services to be ready
 	fmt.Println("\n⏳ Waiting for services to be ready...")
-	maxWait := 60 // seconds
+	
+	// Build URLs for checking
+	dbURL := buildDBURL(config)
+	brokerURL := buildBrokerURL(config)
+	
+	maxWait := 90 // seconds
 	for i := 0; i < maxWait; i++ {
-		time.Sleep(1 * time.Second)
-		if isPortOpen(config.DBHost, config.DBPort) && isPortOpen(config.BrokerHost, config.BrokerPort) {
+		// Check if ports are open first (quick check)
+		if !isPortOpen(config.DBHost, config.DBPort) || !isPortOpen(config.BrokerHost, config.BrokerPort) {
+			time.Sleep(1 * time.Second)
+			if (i+1)%10 == 0 {
+				fmt.Printf("   Waiting for ports... (%d/%d seconds)\n", i+1, maxWait)
+			}
+			continue
+		}
+		
+		// Ports are open, now verify services are actually ready
+		dbReady := checkDatabase(dbURL) == nil
+		brokerReady := checkBroker(brokerURL) == nil
+		
+		if dbReady && brokerReady {
 			fmt.Println("✅ Services are ready")
 			return nil
 		}
+		
+		time.Sleep(2 * time.Second)
 		if (i+1)%10 == 0 {
-			fmt.Printf("   Still waiting... (%d/%d seconds)\n", i+1, maxWait)
+			status := []string{}
+			if !dbReady {
+				status = append(status, "database")
+			}
+			if !brokerReady {
+				status = append(status, "broker")
+			}
+			fmt.Printf("   Waiting for %s... (%d/%d seconds)\n", strings.Join(status, " and "), i+1, maxWait)
 		}
 	}
 
@@ -597,6 +619,7 @@ func isPortOpen(host, port string) bool {
 }
 
 func checkDatabase(dbURL string) error {
+	// First, try to connect to the target database
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		return err
@@ -607,7 +630,35 @@ func checkDatabase(dbURL string) error {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
-		return err
+		// If connection fails, the database might not exist yet
+		// Try connecting to defaultdb to create the target database
+		if strings.Contains(dbURL, "/frkrdb") {
+			// Build URL for defaultdb
+			defaultURL := strings.Replace(dbURL, "/frkrdb", "/defaultdb", 1)
+			defaultDB, err := sql.Open("postgres", defaultURL)
+			if err != nil {
+				return fmt.Errorf("failed to connect to defaultdb: %w", err)
+			}
+			defer defaultDB.Close()
+
+			// Check if defaultdb is ready
+			if err := defaultDB.PingContext(ctx); err != nil {
+				return fmt.Errorf("cockroachdb not ready yet: %w", err)
+			}
+
+			// Create the frkrdb database if it doesn't exist
+			_, err = defaultDB.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS frkrdb")
+			if err != nil {
+				return fmt.Errorf("failed to create database: %w", err)
+			}
+
+			// Now try connecting to frkrdb again
+			if err := db.PingContext(ctx); err != nil {
+				return fmt.Errorf("failed to connect to frkrdb after creation: %w", err)
+			}
+		} else {
+			return err
+		}
 	}
 
 	return nil
@@ -675,7 +726,7 @@ func runMigrationsK8s(repoRoot string) error {
 
 	time.Sleep(2 * time.Second)
 
-	dbURL := "cockroachdb://root@localhost:26257/defaultdb?sslmode=disable"
+	dbURL := "cockroachdb://root@localhost:26257/frkrdb?sslmode=disable"
 	migrationsPath, err := filepath.Abs(filepath.Join(repoRoot, "frkr-common", "migrations"))
 	if err != nil {
 		return err
