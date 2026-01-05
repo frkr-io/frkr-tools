@@ -195,26 +195,8 @@ func setupLocal(config *Config) error {
 	// Wait for context cancellation (from signal or error)
 	<-ctx.Done()
 
-	// Kill processes explicitly (CommandContext should handle this, but be explicit)
-	fmt.Println("\n🛑 Stopping gateways...")
-	killProcess(config.IngestCmd)
-	killProcess(config.StreamingCmd)
-
-	// Wait a moment to ensure processes are fully terminated
-	time.Sleep(500 * time.Millisecond)
-
-	// Double-check and force kill any remaining processes
-	if config.IngestCmd != nil && config.IngestCmd.Process != nil {
-		config.IngestCmd.Process.Kill()
-		config.IngestCmd.Wait()
-		config.IngestCmd = nil
-	}
-	if config.StreamingCmd != nil && config.StreamingCmd.Process != nil {
-		config.StreamingCmd.Process.Kill()
-		config.StreamingCmd.Wait()
-		config.StreamingCmd = nil
-	}
-
-	fmt.Println("✅ Gateways stopped")
+	// Cleanup will be handled by defer, but we can also trigger it explicitly here
+	// The cleanup manager will handle everything concurrently with timeouts
+	fmt.Println("\n🛑 Shutting down...")
 	return nil
 }
