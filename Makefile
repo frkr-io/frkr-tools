@@ -25,7 +25,7 @@ docker-build:
 
 kind-up:
 	kind delete cluster --name frkr-dev || true
-	kind create cluster --name frkr-dev --config kind-config.yaml
+	kind create cluster --name frkr-dev
 	$(MAKE) load-images
 
 load-images:
