@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -84,6 +85,11 @@ func setupLocal(config *Config) error {
 	// Build URLs
 	dbURL := config.BuildDBURL()
 	brokerURL := config.BuildBrokerURL()
+	
+	// Debug: show what URLs were built
+	fmt.Printf("   [DEBUG] Config: DBHost=%s, DBPort=%s, BrokerHost=%s, BrokerPort=%s\n", 
+		config.DBHost, config.DBPort, config.BrokerHost, config.BrokerPort)
+	fmt.Printf("   [DEBUG] Built URLs: DB=%s, Broker=%s\n", dbURL, brokerURL)
 
 	// Check database connection
 	fmt.Println("\n🔍 Checking database connection...")
@@ -177,6 +183,21 @@ func setupLocal(config *Config) error {
 		return fmt.Errorf("failed to start streaming gateway")
 	}
 	config.StreamingCmd = streamingCmd
+	
+	// Start reading stderr immediately to catch startup errors
+	// Note: Gateways log to stderr, so these are normal logs, not necessarily errors
+	go func() {
+		scanner := bufio.NewScanner(ingestStderr)
+		for scanner.Scan() {
+			fmt.Printf("[INGEST] %s\n", scanner.Text())
+		}
+	}()
+	go func() {
+		scanner := bufio.NewScanner(streamingStderr)
+		for scanner.Scan() {
+			fmt.Printf("[STREAMING] %s\n", scanner.Text())
+		}
+	}()
 	
 	defer ingestStdout.Close()
 	defer ingestStderr.Close()

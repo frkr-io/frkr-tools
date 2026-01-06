@@ -378,20 +378,39 @@ func (km *KubernetesManager) waitForMigrationJob() error {
 
 func (km *KubernetesManager) waitForPods() error {
 	fmt.Println("\n⏳ Waiting for pods to be ready...")
-	waitPods := []string{
-		"app.kubernetes.io/component=operator",
-		"app.kubernetes.io/component=ingest-gateway",
-		"app.kubernetes.io/component=streaming-gateway",
+	
+	// Wait for deployments instead of individual pods to avoid issues during rollouts
+	// This is more reliable because it waits for the deployment to have available replicas
+	requiredDeployments := []string{
+		"frkr-ingest-gateway",
+		"frkr-streaming-gateway",
 	}
 
-	for _, selector := range waitPods {
-		cmd := exec.Command("kubectl", "wait", "--for=condition=ready", "pod", "-l", selector, "--timeout=300s")
+	// Optional deployment - operator is nice to have but not required for basic functionality
+	optionalDeployments := []string{
+		"frkr-operator",
+	}
+
+	// Wait for required deployments to be available
+	for _, deployment := range requiredDeployments {
+		cmd := exec.Command("kubectl", "wait", "--for=condition=available", fmt.Sprintf("deployment/%s", deployment), "--timeout=300s")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("pod not ready: %s", selector)
+			return fmt.Errorf("required deployment not ready: %s", deployment)
 		}
 	}
+
+	// Wait for optional deployments (warn but don't fail)
+	for _, deployment := range optionalDeployments {
+		cmd := exec.Command("kubectl", "wait", "--for=condition=available", fmt.Sprintf("deployment/%s", deployment), "--timeout=60s")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("⚠️  Optional deployment not ready (continuing anyway): %s\n", deployment)
+		}
+	}
+	
 	return nil
 }
 

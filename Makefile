@@ -24,14 +24,14 @@ docker-build:
 	cd frkr-operator && docker build -t frkr-operator:0.1.1 .
 
 kind-up:
-	kind delete cluster --name frkr || true
-	kind create cluster --name frkr --config kind-config.yaml
+	kind delete cluster --name frkr-dev || true
+	kind create cluster --name frkr-dev --config kind-config.yaml
 	$(MAKE) load-images
 
 load-images:
-	kind load docker-image frkr-ingest-gateway:0.1.0 --name frkr
-	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr
-	kind load docker-image frkr-operator:0.1.1 --name frkr
+	kind load docker-image frkr-ingest-gateway:0.1.0 --name frkr-dev
+	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr-dev
+	kind load docker-image frkr-operator:0.1.1 --name frkr-dev
 
 deploy:
 	helm upgrade --install frkr frkr-infra-helm -f frkr-infra-helm/values-full.yaml
@@ -47,4 +47,4 @@ verify-e2e:
 
 clean:
 	helm delete frkr || true
-	kind delete cluster --name frkr || true
+	kind delete cluster --name frkr-dev || true

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -50,18 +51,34 @@ func (gm *GatewaysManager) StartGateway(ctx context.Context, gatewayType string,
 	gatewayDir := gatewayPath
 	mainFile := filepath.Join(gatewayDir, "main.go")
 
+	// Debug: print what we're passing to the gateway
+	fmt.Printf("   [DEBUG] Starting %s gateway:\n", gatewayType)
+	fmt.Printf("   [DEBUG]   Dir: %s\n", gatewayDir)
+	fmt.Printf("   [DEBUG]   DB_URL: %s\n", dbURL)
+	fmt.Printf("   [DEBUG]   BROKER_URL: %s\n", brokerURL)
+
 	cmd := exec.CommandContext(ctx, "go", "run", mainFile)
 	cmd.Dir = gatewayDir
-	// Set environment variables for gateways
+	// Set environment variables for gateways (these override flags in 12-factor pattern)
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("HTTP_PORT=%d", port),
 		fmt.Sprintf("DB_URL=%s", dbURL),
 		fmt.Sprintf("BROKER_URL=%s", brokerURL),
 	)
+	// Also pass as flags (gateway will prefer env vars if both are set)
 	cmd.Args = append(cmd.Args,
 		"--http-port", fmt.Sprintf("%d", port),
 		"--db-url", dbURL,
 		"--broker-url", brokerURL)
+	
+	// Debug: verify env vars are set
+	fmt.Printf("   [DEBUG] Environment variables set:\n")
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "HTTP_PORT=") || strings.HasPrefix(env, "DB_URL=") || strings.HasPrefix(env, "BROKER_URL=") {
+			fmt.Printf("   [DEBUG]   %s\n", env)
+		}
+	}
+	fmt.Printf("   [DEBUG] Command args: %v\n", cmd.Args)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

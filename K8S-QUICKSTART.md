@@ -34,10 +34,10 @@ curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 ```bash
 # Create a kind cluster
-kind create cluster --name frkr
+kind create cluster --name frkr-dev
 
 # Verify cluster is running
-kubectl cluster-info --context kind-frkr
+kubectl cluster-info --context kind-frkr-dev
 ```
 
 **Note:** `frkrup` will use this existing cluster. It will not create one for you.
@@ -209,7 +209,7 @@ Watch the `frkr-example-api` terminal - you'll see mirrored requests labeled as 
 kind get clusters
 
 # If missing, recreate
-kind create cluster --name frkr
+kind create cluster --name frkr-dev
 ```
 
 **Wrong kubectl context?**
@@ -220,8 +220,8 @@ kubectl config current-context
 # List all contexts
 kubectl config get-contexts
 
-# Switch to the correct context (e.g., kind-frkr)
-kubectl config use-context kind-frkr
+# Switch to the correct context (e.g., kind-frkr-dev)
+kubectl config use-context kind-frkr-dev
 
 # Verify connection
 kubectl cluster-info
@@ -273,7 +273,7 @@ kubectl logs <pod-name>
 helm uninstall frkr
 
 # Delete the cluster
-kind delete cluster --name frkr
+kind delete cluster --name frkr-dev
 
 # Recreate and restart from Step 1
 ```
@@ -291,6 +291,6 @@ To completely remove frkr from your cluster:
 helm uninstall frkr
 
 # Optional: Delete the cluster
-kind delete cluster --name frkr
+kind delete cluster --name frkr-dev
 ```
 

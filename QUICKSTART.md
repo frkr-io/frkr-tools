@@ -120,7 +120,7 @@ Watch the `frkr-example-api` terminal - you'll see mirrored requests labeled as 
 
 ## What's Next?
 
-- **Route-based routing**: See [Node SDK README](https://github.com/frkr-io/frkr-sdk-node/README.md#route-based-stream-routing) for sending different routes to different streams
+- **Route-based routing**: See [Node SDK README](https://github.com/frkr-io/frkr-sdk-node/blob/master/README.md#route-based-stream-routing) for sending different routes to different streams
 - **Kubernetes setup**: See [Kubernetes Quick Start Guide](K8S-QUICKSTART.md) for Kubernetes deployment
 - **Full documentation**: See [README](README.md) for advanced usage
 
