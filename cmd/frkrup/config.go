@@ -66,11 +66,32 @@ func loadConfigFromFile(path string) (*Config, error) {
 	// Apply defaults for unset values
 	applyDefaults(config)
 
+	// Validate required fields
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
+
 	return config, nil
+}
+
+// validateConfig validates that required configuration is present
+func validateConfig(config *Config) error {
+	if !config.K8s {
+		// Local mode requires explicit host configuration
+		if config.DBHost == "" {
+			return fmt.Errorf("db_host is required in config file")
+		}
+		if config.BrokerHost == "" {
+			return fmt.Errorf("broker_host is required in config file")
+		}
+	}
+	return nil
 }
 
 // applyDefaults sets default values for unset config fields
 func applyDefaults(config *Config) {
+	// Note: DBHost and BrokerHost are REQUIRED - no defaults
+	// They must be explicitly set in config file or via prompts
 	if config.DBPort == "" {
 		config.DBPort = "26257"
 	}
