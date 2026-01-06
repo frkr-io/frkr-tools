@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 )
 
 // GatewaysManager handles gateway operations for both ingest and streaming gateways
+// Note: This is a thin orchestrator - health checking logic lives in the gateways themselves
 type GatewaysManager struct {
 	config *Config
 }
@@ -20,6 +22,20 @@ type GatewaysManager struct {
 // NewGatewaysManager creates a new GatewaysManager
 func NewGatewaysManager(config *Config) *GatewaysManager {
 	return &GatewaysManager{config: config}
+}
+
+// GatewayHealthResponse represents the structured health response from gateways
+type GatewayHealthResponse struct {
+	Status  string                 `json:"status"`
+	Checks  map[string]CheckResult `json:"checks,omitempty"`
+	Version string                 `json:"version,omitempty"`
+	Uptime  string                 `json:"uptime,omitempty"`
+}
+
+// CheckResult represents a single health check from the gateway
+type CheckResult struct {
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
 }
 
 // StartGateway starts a gateway process
@@ -36,6 +52,12 @@ func (gm *GatewaysManager) StartGateway(ctx context.Context, gatewayType string,
 
 	cmd := exec.CommandContext(ctx, "go", "run", mainFile)
 	cmd.Dir = gatewayDir
+	// Set environment variables for gateways
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("HTTP_PORT=%d", port),
+		fmt.Sprintf("DB_URL=%s", dbURL),
+		fmt.Sprintf("BROKER_URL=%s", brokerURL),
+	)
 	cmd.Args = append(cmd.Args,
 		"--http-port", fmt.Sprintf("%d", port),
 		"--db-url", dbURL,
@@ -81,38 +103,82 @@ func (gm *GatewaysManager) StreamLogs(stdout, stderr io.ReadCloser, label string
 }
 
 // VerifyGateways verifies that both gateways are running and healthy
-func (gm *GatewaysManager) VerifyGateways(ingestPort, streamingPort int) error {
-	// Check ingest gateway
-	fmt.Printf("   Checking ingest gateway (http://localhost:%d/health)...\n", ingestPort)
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", ingestPort))
-	if err != nil {
-		return fmt.Errorf("ingest gateway health check failed: %w", err)
+// This is now a thin wrapper - the gateways themselves check their dependencies
+func (gm *GatewaysManager) VerifyGateways() error {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ingest gateway returned status %d (expected 200)", resp.StatusCode)
+
+	// Build URLs from config
+	ingestURL := gm.config.BuildIngestGatewayURL()
+	streamingURL := gm.config.BuildStreamingGatewayURL()
+
+	// Check ingest gateway - gateways now return structured health with dependency status
+	if err := checkGatewayHealth(client, "ingest", ingestURL); err != nil {
+		return err
 	}
-	fmt.Printf("   ✅ Ingest gateway is healthy\n")
 
 	// Check streaming gateway
-	fmt.Printf("   Checking streaming gateway (http://localhost:%d/health)...\n", streamingPort)
-	resp, err = http.Get(fmt.Sprintf("http://localhost:%d/health", streamingPort))
-	if err != nil {
-		return fmt.Errorf("streaming gateway health check failed: %w", err)
+	if err := checkGatewayHealth(client, "streaming", streamingURL); err != nil {
+		return err
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("streaming gateway returned status %d (expected 200)", resp.StatusCode)
-	}
-	fmt.Printf("   ✅ Streaming gateway is healthy\n")
 
 	return nil
 }
 
+// checkGatewayHealth checks a single gateway's health endpoint
+// The gateway is responsible for checking its own dependencies (DB, broker)
+func checkGatewayHealth(client *http.Client, name, url string) error {
+	fmt.Printf("   Checking %s gateway at %s...\n", name, url)
+	startTime := time.Now()
+	
+	resp, err := client.Get(url)
+	duration := time.Since(startTime)
+	
+	if err != nil {
+		return fmt.Errorf("%s gateway health check failed at %s: %w", name, url, err)
+	}
+	defer resp.Body.Close()
+
+	// Parse structured health response from gateway
+	var healthResp GatewayHealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&healthResp); err != nil {
+		// Gateway returned non-JSON (old format) - just check status code
+		if resp.StatusCode == http.StatusOK {
+			fmt.Printf("   ✅ %s gateway is healthy (took %v)\n", name, duration)
+			return nil
+		}
+		return fmt.Errorf("%s gateway returned status %d (expected 200)", name, resp.StatusCode)
+	}
+
+	// Gateway now reports its own dependency status
+	if resp.StatusCode != http.StatusOK || healthResp.Status != "healthy" {
+		// Report which dependencies failed
+		var failedChecks []string
+		for checkName, check := range healthResp.Checks {
+			if check.Status != "pass" {
+				msg := checkName
+				if check.Message != "" {
+					msg += ": " + check.Message
+				}
+				failedChecks = append(failedChecks, msg)
+			}
+		}
+		if len(failedChecks) > 0 {
+			return fmt.Errorf("%s gateway unhealthy - failed checks: %v", name, failedChecks)
+		}
+		return fmt.Errorf("%s gateway returned unhealthy status: %s", name, healthResp.Status)
+	}
+
+	fmt.Printf("   ✅ %s gateway is healthy (v%s, uptime: %s, took %v)\n", 
+		name, healthResp.Version, healthResp.Uptime, duration)
+	return nil
+}
+
 // VerifyGatewaysWithRetries verifies gateways with retry logic
-func (gm *GatewaysManager) VerifyGatewaysWithRetries(ingestPort, streamingPort int, maxRetries int) error {
+func (gm *GatewaysManager) VerifyGatewaysWithRetries(maxRetries int) error {
 	for i := 0; i < maxRetries; i++ {
-		if err := gm.VerifyGateways(ingestPort, streamingPort); err != nil {
+		if err := gm.VerifyGateways(); err != nil {
 			if i < maxRetries-1 {
 				fmt.Printf("   ⏳ Retrying... (%d/%d)\n", i+1, maxRetries)
 				time.Sleep(2 * time.Second)

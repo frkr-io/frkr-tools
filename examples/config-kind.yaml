@@ -1,0 +1,24 @@
+# frkrup configuration for Kind (local Kubernetes) deployment
+# Usage: ./bin/frkrup --config examples/config-kind.yaml
+
+k8s: true
+k8s_cluster_name: frkr-dev
+skip_port_forward: false
+external_access: none
+
+# These are used for port-forwarded access
+db_host: localhost
+db_port: "26257"
+db_user: root
+db_name: frkrdb
+
+broker_host: localhost
+broker_port: "19092"
+
+# Gateway ports (for port forwarding)
+ingest_port: 8082
+streaming_port: 8081
+
+# Stream configuration
+stream_name: my-api
+create_stream: true

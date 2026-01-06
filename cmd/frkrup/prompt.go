@@ -100,12 +100,19 @@ func promptConfig() (*Config, error) {
 		return config, nil
 	}
 
-	// Auto-detect if services are running and use smart defaults
-	// Check if database and broker are accessible on default ports
-	dbRunning := isPortOpen("localhost", "26257")
-	brokerRunning := isPortOpen("localhost", "19092")
+	// Auto-detect if services are running using actual service checkers
+	// This is more reliable than port checking - we verify services actually work
+	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
+	brokerURL := "localhost:19092"
 	
-	if dbRunning && brokerRunning {
+	dbChecker := NewDatabaseChecker()
+	brokerChecker := NewBrokerChecker()
+	
+	// Quick check if services are ready (with short timeout to avoid blocking)
+	dbReady := dbChecker.Check(dbURL) == nil
+	brokerReady := brokerChecker.Check(brokerURL) == nil
+	
+	if dbReady && brokerReady {
 		fmt.Println("✅ Detected running services on default ports")
 		fmt.Println("   Database: localhost:26257")
 		fmt.Println("   Broker: localhost:19092")

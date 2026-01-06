@@ -57,6 +57,11 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
+	// Install Gateway API CRDs (required for Envoy Gateway)
+	if err := km.installGatewayAPICRDs(); err != nil {
+		return err
+	}
+
 	// Install helm chart
 	if err := km.installHelmChart(); err != nil {
 		return err
@@ -99,16 +104,20 @@ func (km *KubernetesManager) Setup() error {
 		}()
 
 		// Verify gateways via port forward
+		// For port-forwarding, gateways are accessible on localhost
+		km.config.IngestHost = "localhost"
+		km.config.StreamingHost = "localhost"
+		
 		fmt.Println("\n✅ Verifying gateways...")
 		time.Sleep(2 * time.Second)
 		gatewayMgr := NewGatewaysManager(km.config)
-		if err := gatewayMgr.VerifyGateways(km.config.IngestPort, km.config.StreamingPort); err != nil {
+		if err := gatewayMgr.VerifyGateways(); err != nil {
 			return fmt.Errorf("gateway verification failed: %w", err)
 		}
 
 		fmt.Println("\n✅ frkr is running on Kubernetes!")
-		fmt.Printf("   Ingest Gateway: http://localhost:%d\n", km.config.IngestPort)
-		fmt.Printf("   Streaming Gateway: http://localhost:%d\n", km.config.StreamingPort)
+		fmt.Printf("   Ingest Gateway: http://localhost:%d (via port-forward)\n", km.config.IngestPort)
+		fmt.Printf("   Streaming Gateway: http://localhost:%d (via port-forward)\n", km.config.StreamingPort)
 		fmt.Println("\nPress Ctrl+C to stop port forwarding and exit.")
 
 		// Wait for interrupt
@@ -123,6 +132,19 @@ func (km *KubernetesManager) Setup() error {
 		} else {
 			// External access was configured, show the results
 			km.showConfiguredExternalAccess()
+			
+			// Attempt to verify gateways if we have the host information
+			if km.config.ExternalAccess == "loadbalancer" && 
+			   km.config.IngestHost != "" && km.config.StreamingHost != "" {
+				fmt.Println("\n🔍 Verifying gateways via LoadBalancer...")
+				gatewayMgr := NewGatewaysManager(km.config)
+				if err := gatewayMgr.VerifyGateways(); err != nil {
+					fmt.Printf("   ⚠️  Gateway health check failed: %v\n", err)
+					fmt.Println("   Gateways may still be starting - check status manually")
+				} else {
+					fmt.Println("   ✅ Gateways are healthy via LoadBalancer")
+				}
+			}
 		}
 		fmt.Println("\n✅ Setup complete! Gateways are ready for external traffic.")
 		fmt.Println("   (Press Ctrl+C to exit)")
@@ -211,6 +233,32 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) error {
 		return fmt.Errorf("kind load failed (make sure kind cluster exists): %w", err)
 	}
 
+	return nil
+}
+
+// installGatewayAPICRDs installs the Kubernetes Gateway API CRDs required for Envoy Gateway
+func (km *KubernetesManager) installGatewayAPICRDs() error {
+	fmt.Println("\n📦 Installing Gateway API CRDs...")
+	
+	// Check if CRDs are already installed
+	checkCmd := exec.Command("kubectl", "get", "crd", "gateways.gateway.networking.k8s.io")
+	if err := checkCmd.Run(); err == nil {
+		fmt.Println("✅ Gateway API CRDs already installed")
+		return nil
+	}
+
+	// Install Gateway API CRDs from official release
+	const gatewayAPIVersion = "v1.1.0"
+	crdURL := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", gatewayAPIVersion)
+	
+	cmd := exec.Command("kubectl", "apply", "-f", crdURL)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install Gateway API CRDs: %w", err)
+	}
+	
+	fmt.Println("✅ Gateway API CRDs installed")
 	return nil
 }
 
@@ -536,13 +584,26 @@ func (km *KubernetesManager) configureLoadBalancer() error {
 					}
 					if strings.Contains(svcName, "ingest") {
 						fmt.Printf("   ✅ Ingest Gateway LoadBalancer IP: %s\n", externalIP)
+						// Set gateway host for health checks
+						km.config.IngestHost = externalIP
 					} else if strings.Contains(svcName, "streaming") {
 						fmt.Printf("   ✅ Streaming Gateway LoadBalancer IP: %s\n", externalIP)
+						// Set gateway host for health checks
+						km.config.StreamingHost = externalIP
 					}
 				}
 			}
 			if allReady && len(lines) >= 2 {
 				fmt.Println("\n✅ LoadBalancer IPs assigned successfully!")
+				// Verify gateways are accessible via LoadBalancer
+				fmt.Println("\n🔍 Verifying gateways via LoadBalancer...")
+				gatewayMgr := NewGatewaysManager(km.config)
+				if err := gatewayMgr.VerifyGateways(); err != nil {
+					fmt.Printf("   ⚠️  Gateway health check failed: %v\n", err)
+					fmt.Println("   Gateways may still be starting - check status manually")
+				} else {
+					fmt.Println("   ✅ Gateways are healthy via LoadBalancer")
+				}
 				return nil
 			}
 		}
@@ -663,6 +724,12 @@ spec:
 			fmt.Printf("   Ingest Gateway:    http://%s/ingest\n", km.config.IngressHost)
 			fmt.Printf("   Streaming Gateway: http://%s/streaming\n", km.config.IngressHost)
 			fmt.Println("\n   Note: Ensure DNS points to the Ingress address above")
+			
+			// For Ingress, we can't easily verify from here (would need DNS resolution)
+			// But we can set the host for potential future verification
+			// The health check URLs will use the Ingress hostname with /ingest/health and /streaming/health paths
+			fmt.Println("\n   ⚠️  Gateway health verification skipped for Ingress")
+			fmt.Println("   (DNS resolution required - verify manually after DNS is configured)")
 			return nil
 		}
 

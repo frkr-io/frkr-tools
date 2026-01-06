@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -9,11 +10,29 @@ import (
 	"time"
 )
 
+var (
+	configFile = flag.String("config", "", "Path to YAML config file (non-interactive mode)")
+)
+
 func main() {
-	config, err := promptConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	flag.Parse()
+
+	var config *Config
+	var err error
+
+	if *configFile != "" {
+		config, err = loadConfigFromFile(*configFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("📄 Loaded configuration from %s\n", *configFile)
+	} else {
+		config, err = promptConfig()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Ensure cleanup on exit (for local mode)
@@ -141,15 +160,15 @@ func setupLocal(config *Config) error {
 	gatewayMgr := NewGatewaysManager(config)
 
 	// Start ingest gateway
+	fmt.Printf("   Starting ingest gateway on port %d...\n", config.IngestPort)
 	ingestCmd, ingestStdout, ingestStderr := gatewayMgr.StartGateway(ctx, "ingest", config.IngestPort, dbURL, brokerURL)
 	if ingestCmd == nil {
 		return fmt.Errorf("failed to start ingest gateway")
 	}
 	config.IngestCmd = ingestCmd
-	defer ingestStdout.Close()
-	defer ingestStderr.Close()
-
+	
 	// Start streaming gateway
+	fmt.Printf("   Starting streaming gateway on port %d...\n", config.StreamingPort)
 	streamingCmd, streamingStdout, streamingStderr := gatewayMgr.StartGateway(ctx, "streaming", config.StreamingPort, dbURL, brokerURL)
 	if streamingCmd == nil {
 		cancel()
@@ -158,6 +177,9 @@ func setupLocal(config *Config) error {
 		return fmt.Errorf("failed to start streaming gateway")
 	}
 	config.StreamingCmd = streamingCmd
+	
+	defer ingestStdout.Close()
+	defer ingestStderr.Close()
 	defer streamingStdout.Close()
 	defer streamingStderr.Close()
 	defer func() {
@@ -167,14 +189,14 @@ func setupLocal(config *Config) error {
 		}
 	}()
 
-	// Wait a bit for gateways to start
-	fmt.Println("\n⏳ Waiting for gateways to start...")
+	// Wait for gateways to start (they now self-check their dependencies)
+	fmt.Println("\n⏳ Waiting for gateways to be ready...")
 	time.Sleep(5 * time.Second)
 
-	// Verify gateways with retries
-	fmt.Println("\n✅ Verifying gateways...")
-	maxRetries := 5
-	if err := gatewayMgr.VerifyGatewaysWithRetries(config.IngestPort, config.StreamingPort, maxRetries); err != nil {
+	// Verify gateways - they now report their own dependency status
+	fmt.Println("\n🔍 Verifying gateways...")
+	maxRetries := 10
+	if err := gatewayMgr.VerifyGatewaysWithRetries(maxRetries); err != nil {
 		cancel()
 		killProcess(config.IngestCmd)
 		killProcess(config.StreamingCmd)
@@ -184,8 +206,16 @@ func setupLocal(config *Config) error {
 	}
 
 	fmt.Println("\n✅ frkr is running!")
-	fmt.Printf("   Ingest Gateway: http://localhost:%d\n", config.IngestPort)
-	fmt.Printf("   Streaming Gateway: http://localhost:%d\n", config.StreamingPort)
+	ingestHost := config.IngestHost
+	if ingestHost == "" {
+		ingestHost = "localhost"
+	}
+	streamingHost := config.StreamingHost
+	if streamingHost == "" {
+		streamingHost = "localhost"
+	}
+	fmt.Printf("   Ingest Gateway: http://%s:%d\n", ingestHost, config.IngestPort)
+	fmt.Printf("   Streaming Gateway: http://%s:%d\n", streamingHost, config.StreamingPort)
 	fmt.Println("\n📋 Gateway logs (Ctrl+C to stop):")
 
 	// Stream logs

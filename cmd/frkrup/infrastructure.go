@@ -29,12 +29,20 @@ func NewInfrastructureManager(config *Config) *InfrastructureManager {
 // EnsureRunning checks if database and broker are running,
 // and optionally starts Docker Compose if they're not available.
 func (im *InfrastructureManager) EnsureRunning() error {
-	// Quick check if services are already running
-	dbRunning := isPortOpen(im.config.DBHost, im.config.DBPort)
-	brokerRunning := isPortOpen(im.config.BrokerHost, im.config.BrokerPort)
+	// Check if services are ready using actual service checkers (source of truth)
+	// This is more reliable than port checking, which can be misleading
+	dbURL := im.config.BuildDBURL()
+	brokerURL := im.config.BuildBrokerURL()
+	
+	dbChecker := NewDatabaseChecker()
+	brokerChecker := NewBrokerChecker()
+	
+	// Quick check if services are already ready
+	dbReady := dbChecker.Check(dbURL) == nil
+	brokerReady := brokerChecker.Check(brokerURL) == nil
 
-	if dbRunning && brokerRunning {
-		fmt.Println("✅ Infrastructure services are already running")
+	if dbReady && brokerReady {
+		fmt.Println("✅ Infrastructure services are already running and ready")
 		return nil
 	}
 
@@ -68,49 +76,50 @@ func (im *InfrastructureManager) EnsureRunning() error {
 		return fmt.Errorf("infrastructure services are required")
 	}
 
-	// Start Docker Compose
-	fmt.Println("\n🐳 Starting Docker Compose...")
-	cmd := exec.Command("docker", "compose", "up", "-d")
-	cmd.Dir = dockerPath
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to start Docker Compose: %w", err)
+	// Check Docker Compose container health status (more reliable than port checking)
+	containersHealthy, err := im.checkDockerComposeHealth(dockerPath)
+	if err != nil {
+		// If we can't check health, proceed with starting
+		containersHealthy = false
 	}
 
-	im.config.StartedDocker = true
+	// Start Docker Compose if needed
+	if containersHealthy {
+		fmt.Println("\n🐳 Docker Compose containers are running, verifying service readiness...")
+		// Give services a moment to be fully ready even if containers are healthy
+		// (containers can be healthy but services might need a moment to accept connections)
+		time.Sleep(3 * time.Second)
+	} else {
+		fmt.Println("\n🐳 Starting Docker Compose...")
+		cmd := exec.Command("docker", "compose", "up", "-d")
+		cmd.Dir = dockerPath
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to start Docker Compose: %w", err)
+		}
+		im.config.StartedDocker = true
+		// Give containers time to start and become healthy
+		time.Sleep(5 * time.Second)
+	}
 
-	// Wait for services to be ready
+	// Wait for services to be ready using actual service checkers
 	fmt.Println("\n⏳ Waiting for services to be ready...")
 
-	// Build URLs for checking
-	dbURL := im.config.BuildDBURL()
-	brokerURL := im.config.BuildBrokerURL()
-
-	maxWait := 90 // seconds
+	maxWait := 60 // seconds
 	for i := 0; i < maxWait; i++ {
-		// Check if ports are open first (quick check)
-		if !isPortOpen(im.config.DBHost, im.config.DBPort) || !isPortOpen(im.config.BrokerHost, im.config.BrokerPort) {
-			time.Sleep(1 * time.Second)
-			if (i+1)%10 == 0 {
-				fmt.Printf("   Waiting for ports... (%d/%d seconds)\n", i+1, maxWait)
-			}
-			continue
-		}
-
-		// Ports are open, now verify services are actually ready
-		dbChecker := NewDatabaseChecker()
-		brokerChecker := NewBrokerChecker()
-		dbReady := dbChecker.Check(dbURL) == nil
-		brokerReady := brokerChecker.Check(brokerURL) == nil
+		dbErr := dbChecker.Check(dbURL)
+		dbReady := dbErr == nil
+		brokerErr := brokerChecker.Check(brokerURL)
+		brokerReady := brokerErr == nil
 
 		if dbReady && brokerReady {
 			fmt.Println("✅ Services are ready")
 			return nil
 		}
 
-		time.Sleep(2 * time.Second)
-		if (i+1)%10 == 0 {
+		time.Sleep(1 * time.Second)
+		if (i+1)%15 == 0 {
 			status := []string{}
 			if !dbReady {
 				status = append(status, "database")
@@ -127,8 +136,56 @@ func (im *InfrastructureManager) EnsureRunning() error {
 	return fmt.Errorf("services did not become ready within %d seconds", maxWait)
 }
 
+// checkDockerComposeHealth checks if Docker Compose containers are healthy
+// This is more reliable than port checking as it uses Docker's health check status
+func (im *InfrastructureManager) checkDockerComposeHealth(dockerPath string) (bool, error) {
+	// Check container health status using docker compose ps
+	cmd := exec.Command("docker", "compose", "ps", "--format", "json")
+	cmd.Dir = dockerPath
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+
+	// Parse JSON output to check for healthy containers
+	// Expected containers: frkr-cockroachdb and frkr-redpanda
+	// Docker Compose JSON format: each line is a JSON object
+	outputStr := string(output)
+	lines := strings.Split(strings.TrimSpace(outputStr), "\n")
+	
+	hasCockroach := false
+	hasRedpanda := false
+	
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		// Check for container name and health/state
+		if strings.Contains(line, "frkr-cockroachdb") {
+			// Container exists - check if it's healthy or running
+			if strings.Contains(line, "\"Health\":\"healthy\"") || 
+			   strings.Contains(line, "\"State\":\"running\"") ||
+			   strings.Contains(line, "\"Status\":\"Up") {
+				hasCockroach = true
+			}
+		}
+		if strings.Contains(line, "frkr-redpanda") {
+			if strings.Contains(line, "\"Health\":\"healthy\"") || 
+			   strings.Contains(line, "\"State\":\"running\"") ||
+			   strings.Contains(line, "\"Status\":\"Up") {
+				hasRedpanda = true
+			}
+		}
+	}
+
+	return hasCockroach && hasRedpanda, nil
+}
+
 // isPortOpen checks if a TCP port is open and accepting connections
+// NOTE: This is kept for backward compatibility in prompt.go, but should not be used
+// as the primary mechanism for service detection. Use service checkers instead.
 func isPortOpen(host, port string) bool {
+	// Quick check with short timeout - this is just a heuristic
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 1*time.Second)
 	if err != nil {
 		return false
@@ -158,6 +215,16 @@ func (dc *DatabaseChecker) Check(dbURL string) error {
 	defer cancel()
 
 	if err := db.PingContext(ctx); err != nil {
+		// Check if it's a connection error (service not ready) vs database doesn't exist
+		errStr := err.Error()
+		if strings.Contains(errStr, "connection refused") || 
+		   strings.Contains(errStr, "no such host") ||
+		   strings.Contains(errStr, "timeout") ||
+		   strings.Contains(errStr, "network is unreachable") {
+			// Service not ready yet - return error to retry
+			return fmt.Errorf("database service not ready: %w", err)
+		}
+		
 		// If connection fails, the database might not exist yet
 		// Try connecting to defaultdb to create the target database
 		if strings.Contains(dbURL, "/frkrdb") {
