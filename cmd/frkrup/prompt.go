@@ -18,20 +18,43 @@ func promptConfig() (*Config, error) {
 
 	scanner := bufio.NewScanner(os.Stdin)
 
+	// Auto-detect if kubectl is available and connected to a cluster
+	isK8sAvailable := isKubernetesAvailable()
+	
 	// K8s?
-	fmt.Print("Deploy to Kubernetes? (yes/no) [no]: ")
+	if isK8sAvailable {
+		fmt.Print("Deploy to Kubernetes? (yes/no) [yes]: ")
+	} else {
+		fmt.Print("Deploy to Kubernetes? (yes/no) [no]: ")
+	}
 	scanner.Scan()
 	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	config.K8s = answer == "yes" || answer == "y"
+	if answer == "" {
+		// Default based on availability
+		config.K8s = isK8sAvailable
+	} else {
+		config.K8s = answer == "yes" || answer == "y"
+	}
 
 	if config.K8s {
-		// Ask about port forwarding (skip for production/managed clusters)
-		fmt.Print("Use port forwarding for local access? (yes/no) [yes]: ")
+		// Auto-detect if we're in a kind cluster
+		isKindCluster := isKindCluster()
+		
+		// Auto-detect port forwarding need (default to yes for kind, no for managed)
+		if isKindCluster {
+			fmt.Print("Use port forwarding for local access? (yes/no) [yes]: ")
+		} else {
+			fmt.Print("Use port forwarding for local access? (yes/no) [no]: ")
+		}
 		scanner.Scan()
 		answer = strings.ToLower(strings.TrimSpace(scanner.Text()))
-		config.SkipPortForward = answer == "no" || answer == "n"
+		if answer == "" {
+			config.SkipPortForward = !isKindCluster // Default: yes for kind, no for managed
+		} else {
+			config.SkipPortForward = answer == "no" || answer == "n"
+		}
 
-		// Ask about external access configuration
+		// Ask about external access configuration only if not using port forwarding
 		if config.SkipPortForward {
 			fmt.Println("\n📡 External Access Configuration:")
 			fmt.Println("   How should gateways be exposed externally?")
@@ -56,6 +79,9 @@ func promptConfig() (*Config, error) {
 				if config.IngressHost == "" {
 					return nil, fmt.Errorf("ingress hostname is required")
 				}
+				fmt.Print("   TLS Secret Name (optional, press Enter to skip): ")
+				scanner.Scan()
+				config.IngressTLSSecret = strings.TrimSpace(scanner.Text())
 			case "3":
 				config.ExternalAccess = "none"
 			default:
@@ -74,6 +100,93 @@ func promptConfig() (*Config, error) {
 		return config, nil
 	}
 
+	// Auto-detect if services are running and use smart defaults
+	// Check if database and broker are accessible on default ports
+	dbRunning := isPortOpen("localhost", "26257")
+	brokerRunning := isPortOpen("localhost", "19092")
+	
+	if dbRunning && brokerRunning {
+		fmt.Println("✅ Detected running services on default ports")
+		fmt.Println("   Database: localhost:26257")
+		fmt.Println("   Broker: localhost:19092")
+		fmt.Print("\nUse detected services? (yes/no) [yes]: ")
+		scanner.Scan()
+		answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if answer == "" || answer == "yes" || answer == "y" {
+			// Use defaults
+			config.DBHost = "localhost"
+			config.DBPort = "26257"
+			config.DBUser = "root"
+			config.DBPassword = ""
+			config.DBName = "frkrdb"
+			config.BrokerHost = "localhost"
+			config.BrokerPort = "19092"
+			config.BrokerUser = ""
+			config.BrokerPassword = ""
+		} else {
+			// Prompt for custom values
+			config = promptCustomInfrastructure(config, scanner)
+		}
+	} else {
+		// Services not detected, use defaults but allow customization
+		fmt.Println("⚠️  Services not detected on default ports")
+		fmt.Print("Use default configuration? (yes/no) [yes]: ")
+		scanner.Scan()
+		answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if answer == "" || answer == "yes" || answer == "y" {
+			// Use defaults
+			config.DBHost = "localhost"
+			config.DBPort = "26257"
+			config.DBUser = "root"
+			config.DBPassword = ""
+			config.DBName = "frkrdb"
+			config.BrokerHost = "localhost"
+			config.BrokerPort = "19092"
+			config.BrokerUser = ""
+			config.BrokerPassword = ""
+		} else {
+			// Prompt for custom values
+			config = promptCustomInfrastructure(config, scanner)
+		}
+	}
+
+	// Gateway ports (only prompt if non-default needed)
+	fmt.Printf("Ingest gateway port [%d]: ", config.IngestPort)
+	scanner.Scan()
+	portStr := strings.TrimSpace(scanner.Text())
+	if portStr != "" {
+		fmt.Sscanf(portStr, "%d", &config.IngestPort)
+	}
+
+	fmt.Printf("Streaming gateway port [%d]: ", config.StreamingPort)
+	scanner.Scan()
+	portStr = strings.TrimSpace(scanner.Text())
+	if portStr != "" {
+		fmt.Sscanf(portStr, "%d", &config.StreamingPort)
+	}
+
+	// Stream name
+	fmt.Printf("Stream name [%s]: ", config.StreamName)
+	scanner.Scan()
+	streamName := strings.TrimSpace(scanner.Text())
+	if streamName != "" {
+		config.StreamName = streamName
+	}
+
+	// Automatically determine migrations path using Go module resolution
+	migrationsPath, err := findMigrationsPath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find migrations: %w", err)
+	}
+	config.MigrationsPath = migrationsPath
+
+	return config, nil
+}
+
+// promptCustomInfrastructure prompts for custom infrastructure configuration
+func promptCustomInfrastructure(config *Config, scanner *bufio.Scanner) *Config {
+	fmt.Println("\n📋 Custom Infrastructure Configuration:")
+	
 	// Database configuration
 	fmt.Print("Database host [localhost]: ")
 	scanner.Scan()
@@ -125,36 +238,6 @@ func promptConfig() (*Config, error) {
 	fmt.Print("Broker password (optional): ")
 	scanner.Scan()
 	config.BrokerPassword = strings.TrimSpace(scanner.Text())
-
-	// Gateway ports
-	fmt.Printf("Ingest gateway port [%d]: ", config.IngestPort)
-	scanner.Scan()
-	portStr := strings.TrimSpace(scanner.Text())
-	if portStr != "" {
-		fmt.Sscanf(portStr, "%d", &config.IngestPort)
-	}
-
-	fmt.Printf("Streaming gateway port [%d]: ", config.StreamingPort)
-	scanner.Scan()
-	portStr = strings.TrimSpace(scanner.Text())
-	if portStr != "" {
-		fmt.Sscanf(portStr, "%d", &config.StreamingPort)
-	}
-
-	// Stream name
-	fmt.Printf("Stream name [%s]: ", config.StreamName)
-	scanner.Scan()
-	streamName := strings.TrimSpace(scanner.Text())
-	if streamName != "" {
-		config.StreamName = streamName
-	}
-
-	// Automatically determine migrations path using Go module resolution
-	migrationsPath, err := findMigrationsPath()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find migrations: %w", err)
-	}
-	config.MigrationsPath = migrationsPath
-
-	return config, nil
+	
+	return config
 }

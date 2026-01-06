@@ -33,21 +33,28 @@ make build
 ```
 
 **What happens:**
-1. `frkrup` will detect if Docker Compose services aren't running and offer to start them
-2. Press Enter to accept all defaults (or customize as needed)
-3. `frkrup` will:
+1. `frkrup` auto-detects if services are running and asks minimal questions
+2. If services aren't running, `frkrup` will offer to start Docker Compose automatically
+3. Press Enter to accept all defaults (most prompts have smart defaults)
+4. `frkrup` will:
+   - Auto-detect running services on default ports
    - Start CockroachDB and Redpanda (if needed)
-   - Run database migrations
+   - Run database migrations automatically
    - Create the default stream (`my-api`)
    - Start both gateways
-   - Stream gateway logs
+   - Stream gateway logs with health check status
 
-**Default configuration:**
-- Database: `localhost:26257` (CockroachDB)
-- Broker: `localhost:19092` (Redpanda)
+**Default configuration (auto-detected):**
+- Database: `localhost:26257` (PostgreSQL-compatible, works with CockroachDB or Postgres)
+- Broker: `localhost:19092` (Kafka-compatible, works with Redpanda or Kafka)
 - Ingest Gateway: `http://localhost:8082`
 - Streaming Gateway: `http://localhost:8081`
 - Stream: `my-api`
+
+**Simplified prompts:**
+- If services are detected, you'll only be asked to confirm using them
+- If services aren't detected, you can use defaults or customize
+- Gateway ports and stream name can be customized if needed
 
 **Keep this terminal open** - `frkrup` stays running and streams gateway logs. Press `Ctrl+C` to stop everything.
 
@@ -121,13 +128,24 @@ Watch the `frkr-example-api` terminal - you'll see mirrored requests labeled as 
 
 ## Troubleshooting
 
+**Auto-detection not working?**
+- `frkrup` checks ports `26257` (database) and `19092` (broker) on `localhost`
+- If services are running on different ports, choose "no" when asked to use detected services
+- You'll then be prompted for custom configuration
+
 **Ports already in use?**
 - Stop any existing services: `docker compose down` (in `frkr-infra-docker`)
-- Or change ports in `frkrup` prompts
+- Or change ports in `frkrup` prompts (when customizing configuration)
 
 **Can't connect to database/broker?**
 - Ensure Docker Compose services are running: `docker ps | grep -E "(cockroach|redpanda)"`
-- Start them manually: `cd frkr-tools/frkr-infra-docker && docker compose up -d`
+- If `frkrup` didn't start them automatically, start manually: `cd frkr-tools/frkr-infra-docker && docker compose up -d`
+- Wait a few seconds for services to be ready, then try again
+
+**Database/Broker compatibility:**
+- Works with **PostgreSQL** or **CockroachDB** (auto-detected)
+- Works with **Kafka** or **Redpanda** (both use standard Kafka protocol)
+- No vendor-specific configuration needed
 
 **Need to reset everything?**
 - Stop `frkrup` (Ctrl+C)

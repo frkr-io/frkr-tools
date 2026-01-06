@@ -8,6 +8,38 @@ import (
 	"strings"
 )
 
+// isKubernetesAvailable checks if kubectl is available and connected to a cluster
+func isKubernetesAvailable() bool {
+	// Check if kubectl exists
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		return false
+	}
+	
+	// Check if kubectl can connect to a cluster
+	cmd := exec.Command("kubectl", "cluster-info")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run() == nil
+}
+
+// isKindCluster checks if the current kubectl context is a kind cluster
+func isKindCluster() bool {
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		return false
+	}
+	
+	// Get current context
+	cmd := exec.Command("kubectl", "config", "current-context")
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	
+	ctxStr := strings.TrimSpace(string(output))
+	// Kind clusters typically have context names starting with "kind-"
+	return strings.HasPrefix(ctxStr, "kind-")
+}
+
 // findMigrationsPath uses Go module resolution to find frkr-common/migrations
 // Works with both local (replace directive) and remote dependencies
 func findMigrationsPath() (string, error) {

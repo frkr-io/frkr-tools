@@ -83,24 +83,28 @@ func (gm *GatewaysManager) StreamLogs(stdout, stderr io.ReadCloser, label string
 // VerifyGateways verifies that both gateways are running and healthy
 func (gm *GatewaysManager) VerifyGateways(ingestPort, streamingPort int) error {
 	// Check ingest gateway
+	fmt.Printf("   Checking ingest gateway (http://localhost:%d/health)...\n", ingestPort)
 	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/health", ingestPort))
 	if err != nil {
 		return fmt.Errorf("ingest gateway health check failed: %w", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ingest gateway returned status %d", resp.StatusCode)
+		return fmt.Errorf("ingest gateway returned status %d (expected 200)", resp.StatusCode)
 	}
+	fmt.Printf("   ✅ Ingest gateway is healthy\n")
 
 	// Check streaming gateway
+	fmt.Printf("   Checking streaming gateway (http://localhost:%d/health)...\n", streamingPort)
 	resp, err = http.Get(fmt.Sprintf("http://localhost:%d/health", streamingPort))
 	if err != nil {
 		return fmt.Errorf("streaming gateway health check failed: %w", err)
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("streaming gateway returned status %d", resp.StatusCode)
+		return fmt.Errorf("streaming gateway returned status %d (expected 200)", resp.StatusCode)
 	}
+	fmt.Printf("   ✅ Streaming gateway is healthy\n")
 
 	return nil
 }
@@ -110,10 +114,11 @@ func (gm *GatewaysManager) VerifyGatewaysWithRetries(ingestPort, streamingPort i
 	for i := 0; i < maxRetries; i++ {
 		if err := gm.VerifyGateways(ingestPort, streamingPort); err != nil {
 			if i < maxRetries-1 {
-				fmt.Printf("  Retrying... (%d/%d)\n", i+1, maxRetries)
+				fmt.Printf("   ⏳ Retrying... (%d/%d)\n", i+1, maxRetries)
 				time.Sleep(2 * time.Second)
 				continue
 			}
+			fmt.Printf("   ❌ Gateway verification failed after %d attempts\n", maxRetries)
 			return err
 		}
 		break

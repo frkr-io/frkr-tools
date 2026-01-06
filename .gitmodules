@@ -10,3 +10,6 @@
 [submodule "frkr-infra-docker"]
 	path = frkr-infra-docker
 	url = https://github.com/frkr-io/frkr-infra-docker.git
+[submodule "frkr-operator"]
+	path = frkr-operator
+	url = https://github.com/frkr-io/frkr-operator.git

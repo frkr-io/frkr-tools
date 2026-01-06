@@ -52,12 +52,6 @@ func (km *KubernetesManager) Setup() error {
 	}
 	fmt.Printf("Using cluster: %s\n", km.config.K8sClusterName)
 
-	// Get repo root (assume we're in frkr-tools)
-	repoRoot, err := filepath.Abs("../")
-	if err != nil {
-		return fmt.Errorf("failed to get repo root: %w", err)
-	}
-
 	// Build and load gateway images
 	if err := km.buildAndLoadImages(); err != nil {
 		return err
@@ -68,15 +62,16 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
+	// Wait for migration job to complete (Helm hook runs migrations automatically)
+	fmt.Println("\n🗄️  Waiting for database migrations to complete...")
+	if err := km.waitForMigrationJob(); err != nil {
+		return fmt.Errorf("migrations failed: %w", err)
+	}
+	fmt.Println("✅ Migrations completed")
+
 	// Wait for pods
 	if err := km.waitForPods(); err != nil {
 		return err
-	}
-
-	// Run migrations (uses temporary port forward for database access)
-	fmt.Println("\n🗄️  Running database migrations...")
-	if err := RunMigrationsK8s(repoRoot); err != nil {
-		return fmt.Errorf("migrations failed: %w", err)
 	}
 
 	// Configure external access if requested
@@ -286,6 +281,50 @@ func (km *KubernetesManager) restartGatewayDeployments() error {
 		}
 	}
 
+	return nil
+}
+
+// waitForMigrationJob waits for the Helm migration job to complete
+func (km *KubernetesManager) waitForMigrationJob() error {
+	// The migration job name follows the pattern: frkr-migrations
+	// Check if job exists and wait for it to complete
+	cmd := exec.Command("kubectl", "get", "job", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={.items[?(@.metadata.name==\"frkr-migrations\")].metadata.name}")
+	output, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(output)) == "" {
+		// Job might not exist yet or already completed (deleted by hook-delete-policy)
+		// Check if there are any migration jobs
+		cmd = exec.Command("kubectl", "get", "job", "-l", "app.kubernetes.io/name=frkr", "-o", "name")
+		output, err = cmd.Output()
+		if err != nil || strings.TrimSpace(string(output)) == "" {
+			// No migration job found - might have already completed and been deleted
+			// This is fine, migrations run as Helm hooks and may complete quickly
+			fmt.Println("   Migration job not found (may have already completed)")
+			return nil
+		}
+	}
+
+	// Wait for the migration job to complete
+	jobName := "frkr-migrations"
+	fmt.Printf("   Waiting for migration job '%s' to complete...\n", jobName)
+	cmd = exec.Command("kubectl", "wait", "--for=condition=complete", "job", jobName, "--timeout=300s")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// Check if job failed
+		cmd = exec.Command("kubectl", "get", "job", jobName, "-o", "jsonpath={.status.conditions[?(@.type==\"Failed\")].status}")
+		failedOutput, _ := cmd.Output()
+		if strings.TrimSpace(string(failedOutput)) == "True" {
+			// Get job logs for debugging
+			fmt.Println("\n❌ Migration job failed. Checking logs...")
+			cmd = exec.Command("kubectl", "logs", "-l", "job-name="+jobName, "--tail=50")
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Run()
+			return fmt.Errorf("migration job failed")
+		}
+		// Job might have been deleted already (hook-delete-policy)
+		fmt.Println("   Migration job may have already completed")
+	}
 	return nil
 }
 
@@ -552,6 +591,16 @@ func (km *KubernetesManager) configureIngress() error {
 	if ingressClassName != "" {
 		ingressClassNameField = fmt.Sprintf("  ingressClassName: %s\n", ingressClassName)
 	}
+
+	ingressTLSField := ""
+	if km.config.IngressTLSSecret != "" {
+		ingressTLSField = fmt.Sprintf(`  tls:
+  - hosts:
+    - %s
+    secretName: %s
+`, km.config.IngressHost, km.config.IngressTLSSecret)
+	}
+
 	ingressYAML := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -577,7 +626,7 @@ spec:
             name: frkr-streaming-gateway
             port:
               number: 8081
-`, ingressClassNameField, km.config.IngressHost)
+%s`, ingressClassNameField, ingressTLSField, km.config.IngressHost)
 
 	fmt.Printf("   Creating Ingress resource for host: %s\n", km.config.IngressHost)
 	cmd = exec.Command("kubectl", "apply", "-f", "-")

@@ -47,49 +47,81 @@ kubectl cluster-info --context kind-frkr
 ## Step 2: Clone Repositories
 
 ```bash
-# Clone frkr-tools with submodules (includes infrastructure and Helm charts)
+# Clone frkr-tools with submodules (includes infrastructure, Helm charts, and operators)
 git clone --recurse-submodules https://github.com/frkr-io/frkr-tools.git
 
 # Clone the example API
 git clone https://github.com/frkr-io/frkr-example-api.git
 ```
 
+> [!IMPORTANT]
+> If you already cloned `frkr-tools` without submodules, run:
+> ```bash
+> cd frkr-tools
+> git submodule update --init --recursive
+> ```
+
 ---
 
 ## Step 3: Deploy frkr to Kubernetes
 
+**Recommended: Use `frkrup` (simplified, auto-detects everything)**
+
 ```bash
 cd frkr-tools
 
-# Build and run frkrup
+# Build frkrup
 make build
+
+# Run frkrup (it will auto-detect your cluster and ask minimal questions)
 ./bin/frkrup
 ```
 
-**Note:** You can run `frkrup` from any terminal - it doesn't need to be the same terminal where you created the kind cluster. `frkrup` uses `kubectl` which reads from `~/.kube/config` (global configuration). Just ensure:
-- The kind cluster exists: `kind get clusters`
-- The correct kubectl context is set: `kubectl config current-context` (should show `kind-frkr` or similar)
+**Alternative: Use Makefile (for automation/CI)**
 
-**When prompted:**
-1. **Deploy to Kubernetes?** → Type `yes`
-2. **Use port forwarding for local access?** → Type `yes` (for local development with kind)
-3. **Kubernetes cluster name** → Press Enter (auto-detected from `kind-frkr` context) or enter your cluster name
+```bash
+# Single command to build all images, setup Kind cluster, and deploy
+make kind-up deploy
+```
 
 **What happens:**
-1. `frkrup` builds Docker images for both gateways
-2. Loads images into your kind cluster
-3. Upgrades/installs the Helm chart (includes CockroachDB, Redpanda, Operator, and Gateways)
-4. If upgrading, restarts gateway deployments to use new images
-5. Waits for all pods to be ready
-6. Sets up port forwarding (if enabled):
-   - Ingest Gateway: `http://localhost:8082`
-   - Streaming Gateway: `http://localhost:8081`
-7. Runs database migrations
-8. Verifies gateways are healthy
+1. **Auto-Detection**: `frkrup` automatically detects if you have a Kubernetes cluster available
+2. **Cluster Detection**: If you have a kind cluster, it auto-detects and defaults to port forwarding
+3. **Build & Load**: Builds Docker images for gateways and operator, and loads them into the cluster
+4. **Automated Deployment**: Installs the Helm chart (Infrastructure, Operator, Gateways)
+5. **Automated Migrations**: Waits for the Helm migration job to complete automatically
+6. **Operator Reconciliation**: The `frkr-operator` automatically creates necessary tenants and Kafka topics
+7. **Port Forwarding**: For kind clusters, automatically sets up port forwarding for local access
 
-**Keep this terminal open** - `frkrup` maintains port forwarding. Press `Ctrl+C` to stop port forwarding and exit (k8s resources will remain provisioned).
+**Simplified prompts:**
+- **First question**: "Deploy to Kubernetes? (yes/no) [yes/no]"
+  - Defaults to "yes" if kubectl is available and connected to a cluster
+  - Defaults to "no" if no cluster detected
+  - Just press Enter to accept the default
+- **Port forwarding**: "Use port forwarding for local access? (yes/no) [yes/no]"
+  - Defaults to "yes" for kind clusters (auto-detected)
+  - Defaults to "no" for managed clusters
+  - Just press Enter to accept the default
+- **External access** (only asked if port forwarding is "no"):
+  - Choose LoadBalancer, Ingress, or None
+  - For Ingress: prompted for hostname and optional TLS secret
 
-**For Production Deployments:** When deploying to a managed Kubernetes cluster (e.g., EKS, GKE, AKS), answer "no" to port forwarding. `frkrup` will show you how to configure LoadBalancer services or Ingress for external access.
+**Verification:**
+- Ingest Gateway: `http://localhost:8082/health` (or port you configured)
+- Streaming Gateway: `http://localhost:8081/health` (or port you configured)
+
+**For Production Deployments:**
+When deploying to a managed Kubernetes cluster (e.g., EKS, GKE, AKS):
+1. Answer "no" to port forwarding (default for managed clusters)
+2. `frkrup` will ask how to expose services:
+   - **LoadBalancer**: Patches services to `type: LoadBalancer`, which triggers your cloud provider to automatically provision a load balancer (ELB/ALB on AWS, Cloud Load Balancer on GCP, Azure Load Balancer on Azure). This costs money but is the easiest option.
+     - `frkrup` waits up to 5 minutes for external IPs to be assigned
+     - You'll get direct external IPs: `http://<external-ip>:8080` (ingest) and `http://<external-ip>:8081` (streaming)
+   - **Ingress**: Creates an Ingress resource using your existing Ingress Controller (supports TLS)
+     - You will be prompted for a hostname (e.g., `frkr.example.com`)
+     - You can optionally provide a TLS secret name for secure HTTPS access
+     - Gateways accessible at: `http://<hostname>/ingest` and `http://<hostname>/streaming`
+   - **None**: ClusterIP only (internal access, no external exposure)
 
 ---
 
@@ -197,10 +229,18 @@ kubectl cluster-info
 
 **Note:** `frkrup` can be run from any terminal - it uses the kubectl context from `~/.kube/config`, not terminal-specific environment variables.
 
-**Port forwarding fails?**
-- Ensure `frkrup` is still running (it maintains port forwarding)
-- Check if ports are already in use: `lsof -i :8082` or `lsof -i :8081`
-- Restart `frkrup` to re-establish port forwarding
+**Auto-detection:**
+- `frkrup` automatically detects if you have a Kubernetes cluster available
+- For kind clusters, it auto-detects from the kubectl context name (`kind-*`)
+- For managed clusters, it detects from the context and defaults to external access options
+
+**Port forwarding:**
+- For kind clusters: Port forwarding is set up automatically (default: yes)
+- For managed clusters: Port forwarding is skipped by default, external access is configured instead
+- If port forwarding fails:
+  - Ensure `frkrup` is still running (it maintains port forwarding)
+  - Check if ports are already in use: `lsof -i :8082` or `lsof -i :8081`
+  - Restart `frkrup` to re-establish port forwarding
 
 **Pods not ready?**
 ```bash
@@ -215,9 +255,17 @@ kubectl logs <pod-name>
 ```
 
 **Can't connect to gateways?**
-- Verify port forwarding is active: `kubectl port-forward list`
+- For kind clusters: Verify port forwarding is active (should be automatic)
+- For managed clusters: Check LoadBalancer IPs or Ingress addresses
+- Verify port forwarding: `kubectl port-forward list`
 - Check service endpoints: `kubectl get endpoints`
 - Verify services exist: `kubectl get svc`
+
+**Migration job issues?**
+- Migrations run automatically via Helm hooks (no manual step needed)
+- Check migration job status: `kubectl get jobs -l app.kubernetes.io/name=frkr`
+- View migration logs: `kubectl logs -l job-name=frkr-migrations`
+- The job is automatically cleaned up after successful completion
 
 **Need to reset everything?**
 ```bash

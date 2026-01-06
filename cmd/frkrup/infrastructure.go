@@ -147,13 +147,9 @@ func NewDatabaseChecker() *DatabaseChecker {
 
 // Check verifies that the database is accessible and creates it if needed
 func (dc *DatabaseChecker) Check(dbURL string) error {
-	fmt.Printf("🔍 [DEBUG] DatabaseChecker.Check called with dbURL: %s\n", maskPassword(dbURL))
-
 	// First, try to connect to the target database
-	fmt.Printf("🔍 [DEBUG] Attempting to connect to target database...\n")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		fmt.Printf("❌ [DEBUG] sql.Open failed: %v\n", err)
 		return err
 	}
 	defer db.Close()
@@ -161,13 +157,10 @@ func (dc *DatabaseChecker) Check(dbURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	fmt.Printf("🔍 [DEBUG] Pinging target database...\n")
 	if err := db.PingContext(ctx); err != nil {
-		fmt.Printf("⚠️  [DEBUG] Ping failed: %v\n", err)
 		// If connection fails, the database might not exist yet
 		// Try connecting to defaultdb to create the target database
 		if strings.Contains(dbURL, "/frkrdb") {
-			fmt.Printf("🔍 [DEBUG] Database doesn't exist, attempting to create it...\n")
 			// Connect without specifying a database (connects to defaultdb)
 			// Remove the database name from the URL
 			baseURL := strings.Split(dbURL, "/")
@@ -178,78 +171,53 @@ func (dc *DatabaseChecker) Check(dbURL string) error {
 				if idx := strings.Index(defaultURL, "?"); idx != -1 {
 					defaultURL = defaultURL[:idx]
 				}
-				fmt.Printf("🔍 [DEBUG] Connecting without database (will use defaultdb): %s\n", maskPassword(defaultURL))
 				defaultDB, err := sql.Open("postgres", defaultURL)
 				if err != nil {
-					fmt.Printf("❌ [DEBUG] Failed to connect: %v\n", err)
-					return fmt.Errorf("failed to connect to CockroachDB: %w", err)
+					return fmt.Errorf("failed to connect to database: %w", err)
 				}
 				defer defaultDB.Close()
 
 				// Check if connection is ready
-				fmt.Printf("🔍 [DEBUG] Pinging CockroachDB...\n")
 				if err := defaultDB.PingContext(ctx); err != nil {
-					fmt.Printf("❌ [DEBUG] CockroachDB not ready: %v\n", err)
-					return fmt.Errorf("cockroachdb not ready yet: %w", err)
+					return fmt.Errorf("database not ready yet: %w", err)
 				}
-				fmt.Printf("🔍 [DEBUG] CockroachDB is ready\n")
 
 				// Create the frkrdb database (CockroachDB doesn't support IF NOT EXISTS)
-				fmt.Printf("🔍 [DEBUG] Creating frkrdb database...\n")
 				_, err = defaultDB.ExecContext(ctx, "CREATE DATABASE frkrdb")
 				if err != nil {
 					// If database already exists, that's fine - continue
-					if strings.Contains(err.Error(), "already exists") ||
-						strings.Contains(err.Error(), "duplicate") ||
-						strings.Contains(err.Error(), "database \"frkrdb\" already exists") {
-						fmt.Printf("🔍 [DEBUG] Database already exists, continuing...\n")
-						// Database exists, that's fine
-					} else {
-						fmt.Printf("❌ [DEBUG] Failed to create database: %v\n", err)
+					if !strings.Contains(err.Error(), "already exists") &&
+						!strings.Contains(err.Error(), "duplicate") &&
+						!strings.Contains(err.Error(), "database \"frkrdb\" already exists") {
 						return fmt.Errorf("failed to create database: %w", err)
 					}
-				} else {
-					fmt.Printf("🔍 [DEBUG] Database created successfully\n")
 				}
 
-				// Wait longer for database to be fully ready (CockroachDB needs time to initialize)
-				fmt.Printf("🔍 [DEBUG] Waiting for database to be ready...\n")
+				// Wait for database to be fully ready (CockroachDB needs time to initialize)
 				time.Sleep(2 * time.Second)
 
 				// Now try connecting to frkrdb again with retries
 				maxRetries := 10
-				fmt.Printf("🔍 [DEBUG] Attempting to connect to frkrdb with %d retries...\n", maxRetries)
 				for i := 0; i < maxRetries; i++ {
-					fmt.Printf("🔍 [DEBUG] Retry %d/%d: Pinging frkrdb...\n", i+1, maxRetries)
 					if err := db.PingContext(ctx); err == nil {
-						fmt.Printf("🔍 [DEBUG] Successfully connected to frkrdb\n")
 						// Connection successful - ensure public schema exists
 						// CockroachDB should create it automatically, but let's be explicit
-						fmt.Printf("🔍 [DEBUG] Ensuring public schema exists...\n")
 						_, schemaErr := db.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS public")
 						if schemaErr != nil {
-							fmt.Printf("⚠️  [DEBUG] Could not ensure public schema: %v (may be okay)\n", schemaErr)
 							// Schema creation failed, but this might be okay if it already exists
 							// Continue anyway as the schema should exist
-						} else {
-							fmt.Printf("🔍 [DEBUG] Public schema ensured\n")
 						}
 						break
 					}
-					fmt.Printf("⚠️  [DEBUG] Ping failed: %v\n", err)
 					if i == maxRetries-1 {
-						fmt.Printf("❌ [DEBUG] Failed to connect after %d retries\n", maxRetries)
 						return fmt.Errorf("failed to connect to frkrdb after creation: %w", err)
 					}
 					time.Sleep(1 * time.Second)
 				}
 			}
 		} else {
-			fmt.Printf("❌ [DEBUG] Database URL doesn't contain /frkrdb, returning original error\n")
 			return err
 		}
-	} else {
-		fmt.Printf("🔍 [DEBUG] Successfully connected to target database\n")
 	}
 
 	return nil
