@@ -7,28 +7,29 @@ import (
 
 // Config holds the configuration for frkrup setup
 type Config struct {
-	K8s             bool
-	K8sClusterName  string
-	SkipPortForward bool   // Skip port forwarding for production deployments
-	ExternalAccess  string // "none", "loadbalancer", "ingress"
-	IngressHost     string // Hostname for Ingress (if using Ingress)
-	DBHost          string
-	DBPort          string
-	DBUser          string
-	DBPassword      string
-	DBName          string
-	BrokerHost      string
-	BrokerPort      string
-	BrokerUser      string
-	BrokerPassword  string
-	IngestPort      int
-	StreamingPort   int
-	MigrationsPath  string
-	StreamName      string
-	CreateStream    bool
-	StartedDocker   bool      // Track if we started Docker Compose
-	IngestCmd       *exec.Cmd // Track ingest gateway process
-	StreamingCmd    *exec.Cmd // Track streaming gateway process
+	K8s              bool
+	K8sClusterName   string
+	SkipPortForward  bool   // Skip port forwarding for production deployments
+	ExternalAccess   string // "none", "loadbalancer", "ingress"
+	IngressHost      string // Hostname for Ingress (if using Ingress)
+	IngressTLSSecret string // Secret name for Ingress TLS (optional)
+	DBHost           string
+	DBPort           string
+	DBUser           string
+	DBPassword       string
+	DBName           string
+	BrokerHost       string
+	BrokerPort       string
+	BrokerUser       string
+	BrokerPassword   string
+	IngestPort       int
+	StreamingPort    int
+	MigrationsPath   string
+	StreamName       string
+	CreateStream     bool
+	StartedDocker    bool      // Track if we started Docker Compose
+	IngestCmd        *exec.Cmd // Track ingest gateway process
+	StreamingCmd     *exec.Cmd // Track streaming gateway process
 }
 
 // BuildDBURL constructs a PostgreSQL connection URL from the config

@@ -1,73 +1,50 @@
-# Build configuration
-BIN_DIR := bin
-CMD_DIR := cmd/frkrcfg
+# frkr Orchestration Makefile
 
-.PHONY: all
-all: build
+.PHONY: help build kind-up deploy verify-e2e clean
 
-##@ General
-
-.PHONY: help
-help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-
-##@ Development
-
-.PHONY: fmt
-fmt: ## Run go fmt against code.
-	go fmt ./...
-
-.PHONY: vet
-vet: ## Run go vet against code.
-	go vet ./...
-
-.PHONY: test
-test: ## Run tests.
-	go test ./... -v -coverprofile cover.out
-
-.PHONY: test-e2e
-test-e2e: ## Run E2E tests (requires kind, kubectl, helm, Docker).
-	@echo "Running E2E tests for Kubernetes external access..."
-	@echo "This will create a kind cluster and test LoadBalancer, Ingress, and ClusterIP configurations"
-	go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess
-
-.PHONY: test-coverage
-test-coverage: test ## Run tests with coverage report.
-	go tool cover -html=cover.out -o cover.html
-	@echo "Coverage report generated: cover.html"
-
-##@ Build
-
-.PHONY: build
-build: fmt vet build-frkrcfg build-frkrup ## Build all binaries.
-
-.PHONY: build-frkrcfg
-build-frkrcfg: ## Build frkrcfg binary.
-	@mkdir -p $(BIN_DIR)
-	@echo "Building frkrcfg..."
-	@go build -o $(BIN_DIR)/frkrcfg ./cmd/frkrcfg
-	@echo "✅ Built frkrcfg -> $(BIN_DIR)/frkrcfg"
-
-.PHONY: build-frkrup
-build-frkrup: ## Build frkrup binary.
-	@mkdir -p $(BIN_DIR)
-	@echo "Building frkrup..."
-	@go build -o $(BIN_DIR)/frkrup ./cmd/frkrup
-	@echo "✅ Built frkrup -> $(BIN_DIR)/frkrup"
+help:
+	@echo "frkr Orchestration Makefile"
 	@echo ""
-	@echo "✅ All binaries built successfully in $(BIN_DIR)/"
+	@echo "Targets:"
+	@echo "  build         Build all gateway and operator binaries"
+	@echo "  docker-build  Build all Docker images"
+	@echo "  kind-up       Create or restart the Kind cluster"
+	@echo "  deploy        Deploy frkr to Kubernetes using Helm (full stack)"
+	@echo "  verify-e2e    Run end-to-end verification"
+	@echo "  clean         Delete current deployment and Kind cluster"
 
-.PHONY: clean
-clean: ## Clean build artifacts.
-	rm -rf $(BIN_DIR)
-	rm -f cover.out cover.html
+build:
+	cd frkr-ingest-gateway && go build -o bin/gateway ./cmd/gateway
+	cd frkr-streaming-gateway && go build -o bin/gateway ./cmd/gateway
+	cd frkr-operator && make build-operator
 
-.PHONY: install
-install: build ## Install binaries to GOPATH/bin.
-	go install $(CMD_DIR)/main.go
+docker-build:
+	cd frkr-ingest-gateway && docker build -t frkr-ingest-gateway:0.1.0 .
+	cd frkr-streaming-gateway && docker build -t frkr-streaming-gateway:0.1.0 .
+	cd frkr-operator && docker build -t frkr-operator:0.1.1 .
 
-##@ Verification
+kind-up:
+	kind delete cluster --name frkr || true
+	kind create cluster --name frkr --config kind-config.yaml
+	$(MAKE) load-images
 
-.PHONY: verify
-verify: fmt vet test ## Run all verification checks.
+load-images:
+	kind load docker-image frkr-ingest-gateway:0.1.0 --name frkr
+	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr
+	kind load docker-image frkr-operator:0.1.1 --name frkr
 
+deploy:
+	helm upgrade --install frkr frkr-infra-helm -f frkr-infra-helm/values-full.yaml
+
+verify-e2e:
+	@echo "Verifying E2E flow..."
+	# Send test traffic
+	curl -s -X POST http://localhost:8080/ingest \
+		-H "Content-Type: application/json" \
+		-d '{"stream_id": "my-api", "request": {"request_id": "e2e-test", "method": "GET", "path": "/verify"}}' \
+		-u testuser:testpass
+	@echo "Check example-api logs for [FORWARDED FROM FRKR]"
+
+clean:
+	helm delete frkr || true
+	kind delete cluster --name frkr || true
