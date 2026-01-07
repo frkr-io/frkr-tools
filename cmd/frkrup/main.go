@@ -34,6 +34,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		// Apply defaults for fields not prompted
+		applyDefaults(config)
 	}
 
 	// Ensure cleanup on exit (for local mode)
@@ -89,6 +91,7 @@ func setupLocal(config *Config) error {
 	// Debug: show what URLs were built
 	fmt.Printf("   [DEBUG] Config: DBHost=%s, DBPort=%s, BrokerHost=%s, BrokerPort=%s\n", 
 		config.DBHost, config.DBPort, config.BrokerHost, config.BrokerPort)
+	fmt.Printf("   [DEBUG] Migrations: %s\n", config.MigrationsPath)
 	fmt.Printf("   [DEBUG] Built URLs: DB=%s, Broker=%s\n", dbURL, brokerURL)
 
 	// Check database connection

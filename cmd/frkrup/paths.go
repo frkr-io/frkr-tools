@@ -87,34 +87,36 @@ func findGatewayRepoPath(gatewayType string) (string, error) {
 		toolsRoot = parent
 	}
 
-	var gatewayName string
+	var repoName string
 	if gatewayType == "ingest" {
-		gatewayName = "frkr-ingest-gateway"
+		repoName = "frkr-ingest-gateway"
 	} else if gatewayType == "streaming" {
-		gatewayName = "frkr-streaming-gateway"
+		repoName = "frkr-streaming-gateway"
+	} else if gatewayType == "operator" {
+		repoName = "frkr-operator"
 	} else {
-		return "", fmt.Errorf("unknown gateway type: %s", gatewayType)
+		return "", fmt.Errorf("unknown component type: %s", gatewayType)
 	}
 
-	submodulePath := filepath.Join(toolsRoot, gatewayName)
+	submodulePath := filepath.Join(toolsRoot, repoName)
 	goModPath := filepath.Join(submodulePath, "go.mod")
 
 	// Check if submodule exists and is initialized
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
 		// Try to initialize submodule
-		fmt.Printf("  Initializing submodule %s...\n", gatewayName)
+		fmt.Printf("  Initializing submodule %s...\n", repoName)
 		cmd := exec.Command("git", "submodule", "update", "--init", "--recursive", submodulePath)
 		cmd.Dir = toolsRoot
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("failed to initialize submodule %s: %w\n\nHint: Make sure you cloned frkr-tools with --recurse-submodules, or run: git submodule update --init --recursive", gatewayName, err)
+			return "", fmt.Errorf("failed to initialize submodule %s: %w\n\nHint: Make sure you cloned frkr-tools with --recurse-submodules, or run: git submodule update --init --recursive", repoName, err)
 		}
 	}
 
 	// Verify submodule is now available
 	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("gateway %s not found at %s\n\nHint: Run 'git submodule update --init --recursive' in frkr-tools", gatewayName, submodulePath)
+		return "", fmt.Errorf("component %s not found at %s\n\nHint: Run 'git submodule update --init --recursive' in frkr-tools", repoName, submodulePath)
 	}
 
 	return submodulePath, nil

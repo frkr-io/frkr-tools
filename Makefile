@@ -14,9 +14,12 @@ help:
 	@echo "  clean         Delete current deployment and Kind cluster"
 
 build:
+	@mkdir -p bin
 	cd frkr-ingest-gateway && go build -o bin/gateway ./cmd/gateway
 	cd frkr-streaming-gateway && go build -o bin/gateway ./cmd/gateway
 	cd frkr-operator && make build-operator
+	go build -o bin/frkrup ./cmd/frkrup
+	go build -o bin/frkrcfg ./cmd/frkrcfg
 
 docker-build:
 	cd frkr-ingest-gateway && docker build -t frkr-ingest-gateway:0.1.0 .
@@ -45,6 +48,10 @@ verify-e2e:
 		-u testuser:testpass
 	@echo "Check example-api logs for [FORWARDED FROM FRKR]"
 
+# Clean the bin folder
 clean:
+	rm -rf bin
+
+kind-down:
 	helm delete frkr || true
 	kind delete cluster --name frkr-dev || true

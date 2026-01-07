@@ -97,6 +97,11 @@ func promptConfig() (*Config, error) {
 			return nil, fmt.Errorf("failed to find migrations: %w", err)
 		}
 		config.MigrationsPath = migrationsPath
+
+		// Set default hosts for K8s (they will be port-forwarded)
+		config.DBHost = "localhost"
+		config.BrokerHost = "localhost"
+
 		return config, nil
 	}
 

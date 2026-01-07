@@ -114,16 +114,22 @@ func applyDefaults(config *Config) {
 		config.StreamName = "my-api"
 	}
 	if config.MigrationsPath == "" {
-		// Find migrations path relative to current directory or repo root
-		candidates := []string{
-			"frkr-common/migrations",
-			"../frkr-common/migrations",
-		}
-		for _, candidate := range candidates {
-			if absPath, err := filepath.Abs(candidate); err == nil {
-				if _, err := os.Stat(absPath); err == nil {
-					config.MigrationsPath = absPath
-					break
+		// Use the robust path finder that uses Go modules
+		if path, err := findMigrationsPath(); err == nil {
+			config.MigrationsPath = path
+		} else {
+			// Fallback: try local candidates (for development when go.mod isn't set up yet)
+			candidates := []string{
+				"frkr-common/migrations",
+				"../frkr-common/migrations",
+				"frkr-infra-helm/migrations",
+			}
+			for _, candidate := range candidates {
+				if absPath, err := filepath.Abs(candidate); err == nil {
+					if _, err := os.Stat(absPath); err == nil {
+						config.MigrationsPath = absPath
+						break
+					}
 				}
 			}
 		}

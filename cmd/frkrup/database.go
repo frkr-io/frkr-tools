@@ -138,65 +138,58 @@ func maskPassword(dbURL string) string {
 }
 
 // RunMigrationsK8s runs migrations for Kubernetes setup
-func RunMigrationsK8s(repoRoot string) error {
+// RunMigrationsK8s runs migrations for Kubernetes setup using a temporary port-forward
+func RunMigrationsK8s(migrationsPath string) error {
 	cmd := exec.Command("kubectl", "port-forward", "svc/frkr-cockroachdb", "26257:26257")
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to port forward database: %w", err)
 	}
 	defer cmd.Process.Kill()
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
-	migrationsPath, err := filepath.Abs(filepath.Join(repoRoot, "frkr-common", "migrations"))
-	if err != nil {
-		return err
-	}
-
 	dm := NewDatabaseManager(dbURL)
 	return dm.RunMigrations(migrationsPath)
 }
 
-// CreateStream creates a stream in the database
+// CreateStream creates a stream in the database directly using the db library
 func (dm *DatabaseManager) CreateStream(streamName string) (*models.Stream, error) {
-	repoRoot, err := filepath.Abs("../")
-	if err != nil {
-		return nil, err
-	}
-
-	frkrcfgPath := filepath.Join(repoRoot, "frkr-tools", "bin", "frkrcfg")
-	if _, err := os.Stat(frkrcfgPath); os.IsNotExist(err) {
-		cmd := exec.Command("go", "run", "build.go")
-		cmd.Dir = filepath.Join(repoRoot, "frkr-tools")
-		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("failed to build frkrcfg: %w", err)
-		}
-	}
-
-	cmd := exec.Command(frkrcfgPath, "stream", "create", streamName,
-		"--db-url", dm.dbURL,
-		"--description", "Created by frkrup",
-		"--retention-days", "7")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return nil, err
-	}
-
 	dbConn, err := sql.Open("postgres", dm.dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer dbConn.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Test database connection and ensure database exists
+	// If the database doesn't exist, PingContext might fail on some drivers
+	// but for CockroachDB we need to connect to defaultdb first if we're not sure
+	if err := dm.ensureDatabaseExists(dbConn, ctx); err != nil {
+		return nil, err
+	}
+
+	if err := dbConn.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("cannot connect to database: %w", err)
+	}
+
+	// Create or get tenant
 	tenant, err := dbcommon.CreateOrGetTenant(dbConn, "default")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tenant: %w", err)
 	}
 
-	stream, err := dbcommon.GetStream(dbConn, tenant.ID, streamName)
+	// Create stream using the common library
+	// We use 7 days retention as default
+	stream, err := dbcommon.CreateStream(dbConn, tenant.ID, streamName, "Created by frkrup", 7)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get created stream: %w", err)
+		// If it already exists, that's fine, we want to return the existing one
+		if strings.Contains(err.Error(), "already exists") {
+			return dbcommon.GetStream(dbConn, tenant.ID, streamName)
+		}
+		return nil, fmt.Errorf("failed to create stream: %w", err)
 	}
 
 	return stream, nil

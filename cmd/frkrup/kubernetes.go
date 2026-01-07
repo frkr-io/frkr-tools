@@ -53,7 +53,8 @@ func (km *KubernetesManager) Setup() error {
 	fmt.Printf("Using cluster: %s\n", km.config.K8sClusterName)
 
 	// Build and load gateway images
-	if err := km.buildAndLoadImages(); err != nil {
+	updatedImages, err := km.buildAndLoadImages()
+	if err != nil {
 		return err
 	}
 
@@ -63,12 +64,18 @@ func (km *KubernetesManager) Setup() error {
 	}
 
 	// Install helm chart
-	if err := km.installHelmChart(); err != nil {
+	if err := km.installHelmChart(updatedImages); err != nil {
 		return err
 	}
 
 	// Wait for migration job to complete (Helm hook runs migrations automatically)
-	fmt.Println("\n🗄️  Waiting for database migrations to complete...")
+	// But first, ensure the database exists from the host side via port-forward
+	fmt.Println("\n🗄️  Ensuring database exists and running migrations...")
+	if err := RunMigrationsK8s(km.config.MigrationsPath); err != nil {
+		fmt.Printf("⚠️  Warning: Host-side migration failed: %v\n", err)
+		fmt.Println("   Falling back to Helm migration job...")
+	}
+
 	if err := km.waitForMigrationJob(); err != nil {
 		return fmt.Errorf("migrations failed: %w", err)
 	}
@@ -77,6 +84,14 @@ func (km *KubernetesManager) Setup() error {
 	// Wait for pods
 	if err := km.waitForPods(); err != nil {
 		return err
+	}
+
+	// Create stream if requested
+	if km.config.CreateStream {
+		if err := km.createStreamAndTopic(); err != nil {
+			fmt.Printf("⚠️  Stream provisioning failed: %v\n", err)
+			// We don't fail the whole setup, but warn the user
+		}
 	}
 
 	// Configure external access if requested
@@ -186,54 +201,88 @@ func (km *KubernetesManager) determineClusterName() error {
 	return nil
 }
 
-func (km *KubernetesManager) buildAndLoadImages() error {
+func (km *KubernetesManager) buildAndLoadImages() (map[string]bool, error) {
 	fmt.Println("\n📦 Building and loading gateway images...")
+	updated := make(map[string]bool)
 
 	ingestGatewayPath, err := findGatewayRepoPath("ingest")
 	if err != nil {
-		return fmt.Errorf("failed to find ingest gateway: %w", err)
+		return nil, fmt.Errorf("failed to find ingest gateway: %w", err)
 	}
-	if err := km.buildAndLoadImage(ingestGatewayPath, "frkr-ingest-gateway:0.1.0"); err != nil {
-		return fmt.Errorf("failed to build ingest gateway: %w", err)
+	upd, err := km.buildAndLoadImage(ingestGatewayPath, "frkr-ingest-gateway:0.1.0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build ingest gateway: %w", err)
 	}
+	updated["frkr-ingest-gateway"] = upd
 
 	streamingGatewayPath, err := findGatewayRepoPath("streaming")
 	if err != nil {
-		return fmt.Errorf("failed to find streaming gateway: %w", err)
+		return nil, fmt.Errorf("failed to find streaming gateway: %w", err)
 	}
-	if err := km.buildAndLoadImage(streamingGatewayPath, "frkr-streaming-gateway:0.1.0"); err != nil {
-		return fmt.Errorf("failed to build streaming gateway: %w", err)
+	upd, err = km.buildAndLoadImage(streamingGatewayPath, "frkr-streaming-gateway:0.1.0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build streaming gateway: %w", err)
 	}
+	updated["frkr-streaming-gateway"] = upd
 
-	return nil
+	operatorPath, err := findGatewayRepoPath("operator")
+	if err != nil {
+		return nil, fmt.Errorf("failed to find operator: %w", err)
+	}
+	upd, err = km.buildAndLoadImage(operatorPath, "frkr-operator:0.1.1")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build operator: %w", err)
+	}
+	updated["frkr-operator"] = upd
+
+	return updated, nil
 }
 
-func (km *KubernetesManager) buildAndLoadImage(path, imageName string) error {
-	// Check for Dockerfile
+func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, error) {
+	// 0. Get current image ID (if any)
+	oldIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
+	oldIDBytes, _ := oldIDCmd.Output()
+	oldID := strings.TrimSpace(string(oldIDBytes))
+
+	// 1. Check for Dockerfile
 	dockerfile := filepath.Join(path, "Dockerfile")
 	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
-		return fmt.Errorf("Dockerfile not found at %s", dockerfile)
+		return false, fmt.Errorf("Dockerfile not found at %s", dockerfile)
 	}
 
-	// Build image
+	// 2. Build image
 	fmt.Printf("  Building %s...\n", imageName)
 	cmd := exec.Command("docker", "build", "-t", imageName, "-f", dockerfile, path)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker build failed: %w", err)
+		return false, fmt.Errorf("docker build failed: %w", err)
 	}
 
-	// Load into kind cluster
+	// 3. Get new image ID
+	newIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
+	newIDBytes, err := newIDCmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to inspect new image: %w", err)
+	}
+	newID := strings.TrimSpace(string(newIDBytes))
+
+	hasChanged := oldID != newID
+	if !hasChanged {
+		fmt.Printf("  ✅ Image %s is up to date (no change detected)\n", imageName)
+		// We still load it into Kind just in case the cluster was recreated
+	}
+
+	// 4. Load into kind cluster
 	fmt.Printf("  Loading %s into kind cluster '%s'...\n", imageName, km.config.K8sClusterName)
 	cmd = exec.Command("kind", "load", "docker-image", imageName, "--name", km.config.K8sClusterName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("kind load failed (make sure kind cluster exists): %w", err)
+		return false, fmt.Errorf("kind load failed (make sure kind cluster exists): %w", err)
 	}
 
-	return nil
+	return hasChanged, nil
 }
 
 // installGatewayAPICRDs installs the Kubernetes Gateway API CRDs required for Envoy Gateway
@@ -262,7 +311,7 @@ func (km *KubernetesManager) installGatewayAPICRDs() error {
 	return nil
 }
 
-func (km *KubernetesManager) installHelmChart() error {
+func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) error {
 	helmPath, err := findInfraRepoPath("helm")
 	if err != nil {
 		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
@@ -289,25 +338,30 @@ func (km *KubernetesManager) installHelmChart() error {
 		return fmt.Errorf("helm upgrade/install failed: %w", err)
 	}
 
-	// If release existed, restart gateway deployments to pick up new images
+	// Only restart deployments that actually have updated images
 	if releaseExists {
-		fmt.Println("\n🔄 Restarting gateway deployments to use new images...")
-		if err := km.restartGatewayDeployments(); err != nil {
-			fmt.Printf("⚠️  Warning: Failed to restart deployments: %v\n", err)
-			// Don't fail the whole setup, but warn the user
+		toRestart := []string{}
+		for dep, changed := range updatedImages {
+			if changed {
+				toRestart = append(toRestart, dep)
+			}
+		}
+
+		if len(toRestart) > 0 {
+			fmt.Printf("\n🔄 Restarting %d deployments to use new images...\n", len(toRestart))
+			if err := km.restartDeployments(toRestart); err != nil {
+				fmt.Printf("⚠️  Warning: Failed to restart deployments: %v\n", err)
+			}
+		} else {
+			fmt.Println("\n✅ All deployments are up to date (no images changed)")
 		}
 	}
 
 	return nil
 }
 
-// restartGatewayDeployments restarts the gateway deployments to pick up new images
-func (km *KubernetesManager) restartGatewayDeployments() error {
-	deployments := []string{
-		"frkr-ingest-gateway",
-		"frkr-streaming-gateway",
-	}
-
+// restartDeployments restarts the specified deployments
+func (km *KubernetesManager) restartDeployments(deployments []string) error {
 	for _, deployment := range deployments {
 		fmt.Printf("  Restarting %s...\n", deployment)
 		cmd := exec.Command("kubectl", "rollout", "restart", "deployment", deployment)
@@ -377,40 +431,38 @@ func (km *KubernetesManager) waitForMigrationJob() error {
 }
 
 func (km *KubernetesManager) waitForPods() error {
-	fmt.Println("\n⏳ Waiting for pods to be ready...")
-	
-	// Wait for deployments instead of individual pods to avoid issues during rollouts
-	// This is more reliable because it waits for the deployment to have available replicas
-	requiredDeployments := []string{
-		"frkr-ingest-gateway",
-		"frkr-streaming-gateway",
+	fmt.Println("\n⏳ Waiting for gateway deployments to be ready...")
+
+	// Wait for all required deployments in a single command for better efficiency
+	// This allows kubectl to monitor them in parallel
+	required := []string{
+		"deployment/frkr-ingest-gateway",
+		"deployment/frkr-streaming-gateway",
 	}
 
-	// Optional deployment - operator is nice to have but not required for basic functionality
-	optionalDeployments := []string{
-		"frkr-operator",
+	args := append([]string{"wait", "--for=condition=available", "--timeout=300s"}, required...)
+	cmd := exec.Command("kubectl", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("required gateways failed to become ready: %w", err)
 	}
 
-	// Wait for required deployments to be available
-	for _, deployment := range requiredDeployments {
-		cmd := exec.Command("kubectl", "wait", "--for=condition=available", fmt.Sprintf("deployment/%s", deployment), "--timeout=300s")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+	// For the operator, we only wait if it actually exists (to avoid unnecessary timeout if disabled)
+	checkCmd := exec.Command("kubectl", "get", "deployment", "frkr-operator")
+	if err := checkCmd.Run(); err == nil {
+		fmt.Print("⏳ Waiting for optional operator to be ready... ")
+		// Use a much shorter timeout for optional components
+		cmd = exec.Command("kubectl", "wait", "--for=condition=available", "deployment/frkr-operator", "--timeout=5s")
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("required deployment not ready: %s", deployment)
+			fmt.Println("⚠️  timed out (not ready yet)")
+		} else {
+			fmt.Println("✅ ready")
 		}
+	} else {
+		fmt.Println("ℹ️  Optional operator deployment not found, skipping wait")
 	}
 
-	// Wait for optional deployments (warn but don't fail)
-	for _, deployment := range optionalDeployments {
-		cmd := exec.Command("kubectl", "wait", "--for=condition=available", fmt.Sprintf("deployment/%s", deployment), "--timeout=60s")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("⚠️  Optional deployment not ready (continuing anyway): %s\n", deployment)
-		}
-	}
-	
 	return nil
 }
 
@@ -761,4 +813,61 @@ spec:
 	fmt.Println("   Ingress resource created - check status with:")
 	fmt.Println("   kubectl get ingress frkr-gateways")
 	return nil // Don't fail - Ingress is created, just waiting for address
+}
+
+// createStreamAndTopic provisions the initial stream and topic in Kubernetes
+func (km *KubernetesManager) createStreamAndTopic() error {
+	fmt.Printf("\n📡 Provisioning stream '%s' in Kubernetes...\n", km.config.StreamName)
+
+	// 1. Setup temporary port-forwarding for database and broker
+	
+	// DB Port forward
+	fmt.Printf("   Setting up temporary port-forward for database (svc/frkr-cockroachdb:26257)...\n")
+	dbCmd := exec.Command("kubectl", "port-forward", "svc/frkr-cockroachdb", fmt.Sprintf("%s:26257", km.config.DBPort))
+	if err := dbCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start database port-forward: %w", err)
+	}
+	defer dbCmd.Process.Kill()
+
+	// Broker Port forward
+	fmt.Printf("   Setting up temporary port-forward for broker (svc/frkr-redpanda:9092)...\n")
+	brokerCmd := exec.Command("kubectl", "port-forward", "svc/frkr-redpanda", fmt.Sprintf("%s:9092", km.config.BrokerPort))
+	if err := brokerCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start broker port-forward: %w", err)
+	}
+	defer brokerCmd.Process.Kill()
+
+	// Wait for port forwards to be ready and verified
+	time.Sleep(5 * time.Second)
+
+	// 2. Build URLs
+	// Use local ports established via port-forward
+	oldDBHost := km.config.DBHost
+	oldBrokerHost := km.config.BrokerHost
+	km.config.DBHost = "localhost"
+	km.config.BrokerHost = "localhost"
+	defer func() {
+		km.config.DBHost = oldDBHost
+		km.config.BrokerHost = oldBrokerHost
+	}()
+
+	dbURL := km.config.BuildDBURL()
+	brokerURL := km.config.BuildBrokerURL()
+
+	// 3. Create stream in database
+	dbMgr := NewDatabaseManager(dbURL)
+	stream, err := dbMgr.CreateStream(km.config.StreamName)
+	if err != nil {
+		return fmt.Errorf("failed to create stream in database: %w", err)
+	}
+	fmt.Printf("   ✅ Stream '%s' created in database\n", km.config.StreamName)
+
+	// 4. Create topic in broker
+	brokerMgr := NewBrokerManager(brokerURL)
+	if err := brokerMgr.CreateTopic(stream.Topic); err != nil {
+		return fmt.Errorf("failed to create topic in broker: %w", err)
+	}
+	fmt.Printf("   ✅ Topic '%s' created in broker\n", stream.Topic)
+
+	return nil
 }
