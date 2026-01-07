@@ -29,7 +29,6 @@ docker-build:
 kind-up:
 	kind delete cluster --name frkr-dev || true
 	kind create cluster --name frkr-dev
-	$(MAKE) load-images
 
 load-images:
 	kind load docker-image frkr-ingest-gateway:0.1.0 --name frkr-dev
