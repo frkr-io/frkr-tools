@@ -1,6 +1,6 @@
 # frkr Orchestration Makefile
 
-.PHONY: help build kind-up deploy verify-e2e clean
+.PHONY: help build kind-up sync-migrations deploy verify-e2e clean
 
 help:
 	@echo "frkr Orchestration Makefile"
@@ -35,7 +35,20 @@ load-images:
 	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr-dev
 	kind load docker-image frkr-operator:0.1.1 --name frkr-dev
 
-deploy:
+sync-migrations:
+	@echo "Resolving frkr-common path and syncing migrations..."
+	@cd frkr-infra-helm && \
+		COMMON_PATH=$$(go list -m -f '{{.Dir}}' github.com/frkr-io/frkr-common 2>/dev/null) || \
+		COMMON_PATH=../frkr-common; \
+		if [ ! -d "$$COMMON_PATH/migrations" ]; then \
+			echo "Error: migrations directory not found at $$COMMON_PATH/migrations"; \
+			exit 1; \
+		fi; \
+		mkdir -p migrations && \
+		cp $$COMMON_PATH/migrations/*.up.sql migrations/ && \
+		echo "✅ Synced migrations from $$COMMON_PATH/migrations to frkr-infra-helm/migrations"
+
+deploy: sync-migrations
 	helm upgrade --install frkr frkr-infra-helm -f frkr-infra-helm/values-full.yaml
 
 verify-e2e:

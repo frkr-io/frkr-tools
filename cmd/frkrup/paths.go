@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	frkrcommonpaths "github.com/frkr-io/frkr-common/paths"
 )
 
 // isKubernetesAvailable checks if kubectl is available and connected to a cluster
@@ -40,28 +42,9 @@ func isKindCluster() bool {
 	return strings.HasPrefix(ctxStr, "kind-")
 }
 
-// findMigrationsPath uses Go module resolution to find frkr-common/migrations
-// Works with both local (replace directive) and remote dependencies
+// findMigrationsPath uses frkr-common/paths package to find migrations directory
 func findMigrationsPath() (string, error) {
-	// Use Go's module resolution - respects replace directives and module cache
-	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/frkr-io/frkr-common")
-	output, err := cmd.Output()
-	if err == nil {
-		moduleDir := strings.TrimSpace(string(output))
-		migrationsPath := filepath.Join(moduleDir, "migrations")
-		if _, err := os.Stat(migrationsPath); err == nil {
-			return migrationsPath, nil
-		}
-	}
-
-	// Fallback: try local path (for development when go.mod isn't set up yet)
-	repoRoot, _ := filepath.Abs("../")
-	localPath := filepath.Join(repoRoot, "frkr-common", "migrations")
-	if _, err := os.Stat(localPath); err == nil {
-		return localPath, nil
-	}
-
-	return "", fmt.Errorf("migrations not found: frkr-common module not found via 'go list -m' and local path %s does not exist", localPath)
+	return frkrcommonpaths.MigrationsPath()
 }
 
 // findGatewayRepoPath finds the gateway repository root path using git submodules.

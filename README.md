@@ -159,6 +159,15 @@ frkrcfg migrate \
 
 **Note:** `frkrup` automatically runs migrations during setup, so you typically don't need to run this manually.
 
+### Migration Sync for Helm Charts
+
+The Helm deployment process automatically syncs database migrations from `frkr-common/migrations/` to `frkr-infra-helm/migrations/` before deployment. This is handled automatically by:
+
+- **`frkrup`**: Syncs migrations before Helm chart installation
+- **`make deploy`**: The `deploy` target depends on `sync-migrations`, which uses Go module resolution to locate `frkr-common` and copy migration files
+
+Migration files are synced using the `frkr-common/paths` package, which uses Go's module resolution (`go list -m`) to find the `frkr-common` module location. This ensures migrations are always up-to-date and eliminates the need for manual copying.
+
 ## Testing
 
 The test suite uses testcontainers to spin up a real CockroachDB instance for integration testing. Tests require Docker to be running.

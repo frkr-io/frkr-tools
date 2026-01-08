@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	frkrcommonpaths "github.com/frkr-io/frkr-common/paths"
 )
 
 // KubernetesManager handles Kubernetes setup operations
@@ -61,6 +64,11 @@ func (km *KubernetesManager) Setup() error {
 	// Install Gateway API CRDs (required for Envoy Gateway)
 	if err := km.installGatewayAPICRDs(); err != nil {
 		return err
+	}
+
+	// Sync migrations from frkr-common to helm chart
+	if err := km.syncMigrations(); err != nil {
+		return fmt.Errorf("failed to sync migrations: %w", err)
 	}
 
 	// Install helm chart
@@ -283,6 +291,70 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, er
 	}
 
 	return hasChanged, nil
+}
+
+// syncMigrations copies migration files from frkr-common to frkr-infra-helm/migrations/
+func (km *KubernetesManager) syncMigrations() error {
+	fmt.Println("\n📋 Syncing migrations from frkr-common to Helm chart...")
+
+	// Get migrations path from frkr-common
+	sourcePath, err := frkrcommonpaths.MigrationsPath()
+	if err != nil {
+		return fmt.Errorf("failed to resolve migrations path: %w", err)
+	}
+
+	// Get helm chart path
+	helmPath, err := findInfraRepoPath("helm")
+	if err != nil {
+		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
+	}
+
+	// Create migrations directory in helm chart
+	targetDir := filepath.Join(helmPath, "migrations")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create migrations directory: %w", err)
+	}
+
+	// Find all *.up.sql files in source
+	migrationFiles, err := filepath.Glob(filepath.Join(sourcePath, "*.up.sql"))
+	if err != nil {
+		return fmt.Errorf("failed to glob migration files: %w", err)
+	}
+
+	if len(migrationFiles) == 0 {
+		return fmt.Errorf("no migration files found in %s", sourcePath)
+	}
+
+	// Copy each migration file
+	for _, srcFile := range migrationFiles {
+		filename := filepath.Base(srcFile)
+		dstFile := filepath.Join(targetDir, filename)
+
+		src, err := os.Open(srcFile)
+		if err != nil {
+			return fmt.Errorf("failed to open source file %s: %w", srcFile, err)
+		}
+
+		dst, err := os.Create(dstFile)
+		if err != nil {
+			src.Close()
+			return fmt.Errorf("failed to create destination file %s: %w", dstFile, err)
+		}
+
+		if _, err := io.Copy(dst, src); err != nil {
+			src.Close()
+			dst.Close()
+			return fmt.Errorf("failed to copy %s to %s: %w", filename, dstFile, err)
+		}
+
+		src.Close()
+		dst.Close()
+
+		fmt.Printf("   ✅ Synced %s\n", filename)
+	}
+
+	fmt.Printf("✅ Synced %d migration file(s) to %s\n", len(migrationFiles), targetDir)
+	return nil
 }
 
 // installGatewayAPICRDs installs the Kubernetes Gateway API CRDs required for Envoy Gateway

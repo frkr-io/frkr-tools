@@ -28,6 +28,7 @@ func init() {
 
 	rootCmd.AddCommand(streamCmd)
 	rootCmd.AddCommand(userCmd)
+	rootCmd.AddCommand(clientCmd)
 	rootCmd.AddCommand(migrateCmd)
 }
 

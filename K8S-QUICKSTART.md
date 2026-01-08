@@ -193,8 +193,113 @@ Watch the `frkr-example-api` terminal - you'll see mirrored requests labeled as 
 
 ---
 
+## Provisioning Users and Credentials
+
+### Create Users for CLI Authentication
+
+To use the `frkr` CLI with authentication, you can create users via the operator or directly in the database.
+
+**Option 1: Using Kubernetes Operator (Recommended)**
+```bash
+# Create a user via the operator (creates FrkrUser CRD)
+kubectl apply -f - <<EOF
+apiVersion: frkr.io/v1
+kind: FrkrUser
+metadata:
+  name: streamuser
+  namespace: default
+spec:
+  username: streamuser
+  tenantID: ""  # Will use default tenant
+EOF
+
+# Check the user status to get the generated password
+kubectl get frkruser streamuser -o yaml
+# The password will be in the status.password field (one-time display)
+```
+
+**Option 2: Using frkrcfg (Direct DB Access)**
+```bash
+cd frkr-tools
+
+# Port forward to the database (if not using external access)
+kubectl port-forward svc/frkr-cockroachdb 26257:26257 &
+
+# Get the database connection details
+# For CockroachDB in Kubernetes, you'll need to connect via port-forward or service
+./bin/frkrcfg user create streamuser \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --password="your-secure-password"
+```
+
+You can then use these credentials with the CLI:
+```bash
+./bin/frkr stream my-api \
+  --gateway-url=http://localhost:8081 \
+  --username=streamuser \
+  --password=your-secure-password \
+  --forward-url=http://localhost:3001
+```
+
+### Create Client Credentials for SDK Authentication
+
+For SDK clients that need to authenticate with client ID/secret, use `frkrcfg` with port-forwarding:
+
+```bash
+cd frkr-tools
+
+# Port forward to the database (if not using external access)
+kubectl port-forward svc/frkr-cockroachdb 26257:26257 &
+
+# Create a client credential (secret will be auto-generated if not provided)
+./bin/frkrcfg client create my-sdk-client \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+
+# Optionally scope the client to a specific stream
+./bin/frkrcfg client create my-stream-client \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --stream="my-api"
+
+# Or provide your own secret
+./bin/frkrcfg client create my-sdk-client \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --secret="your-client-secret-here"
+```
+
+**Note:**
+- Save the client secret shown - it won't be displayed again!
+- Stream scoping is optional - clients without a stream can access all streams for the tenant
+- The default tenant name is `default` - use `--tenant` flag to specify a different tenant
+
+**List existing clients:**
+```bash
+./bin/frkrcfg client list \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+
+# List clients scoped to a specific stream
+./bin/frkrcfg client list \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --stream="my-api"
+```
+
+**Use the client credentials in your SDK:**
+```javascript
+// Node.js SDK example
+const frkr = require('@frkr-io/sdk-node');
+
+const client = new frkr.Client({
+  gatewayUrl: 'http://localhost:8082',
+  clientId: 'my-sdk-client',
+  clientSecret: 'your-client-secret-here',
+  streamId: 'my-api'
+});
+```
+
+---
+
 ## What's Next?
 
+- **Set up authentication**: See [Provisioning Users and Credentials](#provisioning-users-and-credentials) above to create real users for CLI access and client credentials for SDK authentication (instead of using testuser/testpass)
 - **Route-based routing**: See [Node SDK README](https://github.com/frkr-io/frkr-sdk-node/README.md#route-based-stream-routing) for sending different routes to different streams
 - **Local Docker setup**: See [Quick Start Guide](QUICKSTART.md) for Docker Compose setup
 - **Full documentation**: See [README](README.md) for advanced usage
