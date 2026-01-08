@@ -10,8 +10,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// User represents a user in the system
-type User struct {
+// TenantUser represents a user in the system
+type TenantUser struct {
 	ID           string
 	TenantID     string
 	Username     string
@@ -22,7 +22,7 @@ type User struct {
 }
 
 // CreateUser creates a new user for a tenant
-func CreateUser(db *sql.DB, tenantID, username, password string) (*User, error) {
+func CreateUser(db *sql.DB, tenantID, username, password string) (*TenantUser, error) {
 	// Validate inputs
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
@@ -44,7 +44,7 @@ func CreateUser(db *sql.DB, tenantID, username, password string) (*User, error) 
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	var user User
+	var user TenantUser
 
 	// Check if users table exists (graceful handling if migration not run yet)
 	err = db.QueryRow(`
@@ -78,7 +78,7 @@ func CreateUser(db *sql.DB, tenantID, username, password string) (*User, error) 
 }
 
 // GetUser retrieves a user by username or ID
-func GetUser(db *sql.DB, tenantID, userIdentifier string) (*User, error) {
+func GetUser(db *sql.DB, tenantID, userIdentifier string) (*TenantUser, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
@@ -86,7 +86,7 @@ func GetUser(db *sql.DB, tenantID, userIdentifier string) (*User, error) {
 		return nil, fmt.Errorf("user identifier cannot be empty")
 	}
 
-	var user User
+	var user TenantUser
 	var query string
 	var args []interface{}
 
@@ -135,7 +135,7 @@ func GetUser(db *sql.DB, tenantID, userIdentifier string) (*User, error) {
 }
 
 // ListUsers lists all users for a tenant
-func ListUsers(db *sql.DB, tenantID string) ([]*User, error) {
+func ListUsers(db *sql.DB, tenantID string) ([]*TenantUser, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
@@ -156,9 +156,9 @@ func ListUsers(db *sql.DB, tenantID string) ([]*User, error) {
 	}
 	defer rows.Close()
 
-	var users []*User
+	var users []*TenantUser
 	for rows.Next() {
-		var user User
+		var user TenantUser
 		err := rows.Scan(
 			&user.ID,
 			&user.TenantID,
@@ -182,7 +182,7 @@ func ListUsers(db *sql.DB, tenantID string) ([]*User, error) {
 }
 
 // VerifyPassword verifies a password against a user's password hash
-func VerifyPassword(user *User, password string) error {
+func VerifyPassword(user *TenantUser, password string) error {
 	if user == nil {
 		return fmt.Errorf("user cannot be nil")
 	}

@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// promptConfig prompts the user for configuration values
-func promptConfig() (*Config, error) {
-	config := &Config{
+// promptFrkrupConfig prompts the user for configuration values
+func promptConfig() (*FrkrupConfig, error) {
+	config := &FrkrupConfig{
 		IngestPort:    8082,
 		StreamingPort: 8081,
 		StreamName:    "my-api",
@@ -196,7 +196,7 @@ func promptConfig() (*Config, error) {
 }
 
 // promptCustomInfrastructure prompts for custom infrastructure configuration
-func promptCustomInfrastructure(config *Config, scanner *bufio.Scanner) *Config {
+func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *FrkrupFrkrupConfig {
 	fmt.Println("\n📋 Custom Infrastructure Configuration:")
 	
 	// Database configuration

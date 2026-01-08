@@ -18,11 +18,11 @@ import (
 
 // InfrastructureManager handles infrastructure setup and verification
 type InfrastructureManager struct {
-	config *Config
+	config *FrkrupConfig
 }
 
 // NewInfrastructureManager creates a new InfrastructureManager
-func NewInfrastructureManager(config *Config) *InfrastructureManager {
+func NewInfrastructureManager(config *FrkrupConfig) *InfrastructureManager {
 	return &InfrastructureManager{config: config}
 }
 

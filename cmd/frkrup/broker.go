@@ -22,7 +22,7 @@ func NewBrokerManager(brokerURL string) *BrokerManager {
 // 1. Stream has been created in the database (validated)
 // 2. Topic name comes from the database (not user input)
 func (bm *BrokerManager) CreateTopic(topicName string) error {
-	topicConfigs := []kafka.TopicConfig{
+	topicConfigs := []kafka.TopicFrkrupConfig{
 		{
 			Topic:             topicName,
 			NumPartitions:     1,

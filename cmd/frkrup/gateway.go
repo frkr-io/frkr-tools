@@ -17,11 +17,11 @@ import (
 // GatewaysManager handles gateway operations for both ingest and streaming gateways
 // Note: This is a thin orchestrator - health checking logic lives in the gateways themselves
 type GatewaysManager struct {
-	config *Config
+	config *FrkrupConfig
 }
 
 // NewGatewaysManager creates a new GatewaysManager
-func NewGatewaysManager(config *Config) *GatewaysManager {
+func NewGatewaysManager(config *FrkrupConfig) *GatewaysManager {
 	return &GatewaysManager{config: config}
 }
 

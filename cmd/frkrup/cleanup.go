@@ -21,11 +21,11 @@ const (
 
 // CleanupManager handles cleanup operations
 type CleanupManager struct {
-	config *Config
+	config *FrkrupConfig
 }
 
 // NewCleanupManager creates a new CleanupManager
-func NewCleanupManager(config *Config) *CleanupManager {
+func NewCleanupManager(config *FrkrupConfig) *CleanupManager {
 	return &CleanupManager{config: config}
 }
 
@@ -287,19 +287,19 @@ func (cm *CleanupManager) killPortProcesses(ctx context.Context, port int, name 
 
 // killProcess is a convenience function for backward compatibility
 func killProcess(cmd *exec.Cmd) {
-	cm := NewCleanupManager(&Config{})
+	cm := NewCleanupManager(&FrkrupConfig{})
 	ctx := context.Background()
 	cm.killProcessWithTimeout(ctx, cmd, "process")
 }
 
 // cleanupDocker is a convenience function for backward compatibility
-func cleanupDocker(config *Config) {
+func cleanupDocker(config *FrkrupConfig) {
 	cm := NewCleanupManager(config)
 	cm.CleanupDocker()
 }
 
 // cleanupLocal is a convenience function for backward compatibility
-func cleanupLocal(config *Config) {
+func cleanupLocal(config *FrkrupConfig) {
 	cm := NewCleanupManager(config)
 	cm.CleanupLocal()
 }

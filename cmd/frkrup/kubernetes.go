@@ -17,11 +17,11 @@ import (
 
 // KubernetesManager handles Kubernetes setup operations
 type KubernetesManager struct {
-	config *Config
+	config *FrkrupConfig
 }
 
 // NewKubernetesManager creates a new KubernetesManager
-func NewKubernetesManager(config *Config) *KubernetesManager {
+func NewKubernetesManager(config *FrkrupConfig) *KubernetesManager {
 	return &KubernetesManager{config: config}
 }
 

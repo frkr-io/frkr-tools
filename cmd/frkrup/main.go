@@ -18,7 +18,7 @@ var (
 func main() {
 	flag.Parse()
 
-	var config *Config
+	var config *FrkrupConfig
 	var err error
 
 	if *configFile != "" {
@@ -70,7 +70,7 @@ func main() {
 }
 
 // setupLocal performs the full local setup
-func setupLocal(config *Config) error {
+func setupLocal(config *FrkrupConfig) error {
 	fmt.Println("\n🚀 Setting up frkr locally...")
 
 	// Setup infrastructure

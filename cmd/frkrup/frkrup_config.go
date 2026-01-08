@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds the configuration for frkrup setup
-type Config struct {
+// FrkrupFrkrupConfig holds the configuration for frkrup setup
+type FrkrupFrkrupConfig struct {
 	// Deployment mode
 	K8s              bool   `yaml:"k8s"`
 	K8sClusterName   string `yaml:"k8s_cluster_name"`
@@ -52,13 +52,13 @@ type Config struct {
 }
 
 // loadConfigFromFile loads configuration from a YAML file
-func loadConfigFromFile(path string) (*Config, error) {
+func loadConfigFromFile(path string) (*FrkrupConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
-	config := &Config{}
+	config := &FrkrupConfig{}
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
@@ -74,8 +74,8 @@ func loadConfigFromFile(path string) (*Config, error) {
 	return config, nil
 }
 
-// validateConfig validates that required configuration is present
-func validateConfig(config *Config) error {
+// validateFrkrupConfig validates that required configuration is present
+func validateConfig(config *FrkrupConfig) error {
 	if !config.K8s {
 		// Local mode requires explicit host configuration
 		if config.DBHost == "" {
@@ -89,7 +89,7 @@ func validateConfig(config *Config) error {
 }
 
 // applyDefaults sets default values for unset config fields
-func applyDefaults(config *Config) {
+func applyDefaults(config *FrkrupConfig) {
 	// Note: DBHost and BrokerHost are REQUIRED - no defaults
 	// They must be explicitly set in config file or via prompts
 	if config.DBPort == "" {
@@ -137,7 +137,7 @@ func applyDefaults(config *Config) {
 }
 
 // BuildDBURL constructs a PostgreSQL connection URL from the config
-func (c *Config) BuildDBURL() string {
+func (c *FrkrupConfig) BuildDBURL() string {
 	if c.DBUser != "" {
 		if c.DBPassword != "" {
 			return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
@@ -151,7 +151,7 @@ func (c *Config) BuildDBURL() string {
 }
 
 // BuildBrokerURL constructs a broker connection URL from the config
-func (c *Config) BuildBrokerURL() string {
+func (c *FrkrupConfig) BuildBrokerURL() string {
 	return fmt.Sprintf("%s:%s", c.BrokerHost, c.BrokerPort)
 }
 
@@ -161,7 +161,7 @@ func (c *Config) BuildBrokerURL() string {
 // - K8s port-forward: localhost  
 // - K8s LoadBalancer: external IP (set when IP is assigned)
 // - K8s Ingress: ingress hostname with path prefix
-func (c *Config) BuildIngestGatewayURL() string {
+func (c *FrkrupConfig) BuildIngestGatewayURL() string {
 	host := c.IngestHost
 	if host == "" {
 		host = "localhost"
@@ -181,7 +181,7 @@ func (c *Config) BuildIngestGatewayURL() string {
 }
 
 // BuildStreamingGatewayURL constructs the URL for streaming gateway health checks
-func (c *Config) BuildStreamingGatewayURL() string {
+func (c *FrkrupConfig) BuildStreamingGatewayURL() string {
 	host := c.StreamingHost
 	if host == "" {
 		host = "localhost"

@@ -8,8 +8,8 @@ import (
 	"github.com/lib/pq"
 )
 
-// Client represents a client credential in the system
-type Client struct {
+// ClientCredential represents a client credential in the system
+type ClientCredential struct {
 	ID           string
 	TenantID     string
 	StreamID     sql.NullString
@@ -21,7 +21,7 @@ type Client struct {
 }
 
 // CreateClient creates a new client credential for a tenant, optionally scoped to a stream
-func CreateClient(db *sql.DB, tenantID, clientID, clientSecret string, streamID *string) (*Client, error) {
+func CreateClient(db *sql.DB, tenantID, clientID, clientSecret string, streamID *string) (*ClientCredential, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
@@ -43,7 +43,7 @@ func CreateClient(db *sql.DB, tenantID, clientID, clientSecret string, streamID 
 		return nil, fmt.Errorf("client secret must be at least 8 characters")
 	}
 
-	var client Client
+	var client ClientCredential
 	var streamIDVal sql.NullString
 	if streamID != nil && *streamID != "" {
 		streamIDVal = sql.NullString{String: *streamID, Valid: true}
@@ -88,7 +88,7 @@ func CreateClient(db *sql.DB, tenantID, clientID, clientSecret string, streamID 
 }
 
 // GetClient retrieves a client by client ID or UUID
-func GetClient(db *sql.DB, tenantID, clientIdentifier string) (*Client, error) {
+func GetClient(db *sql.DB, tenantID, clientIdentifier string) (*ClientCredential, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
@@ -96,7 +96,7 @@ func GetClient(db *sql.DB, tenantID, clientIdentifier string) (*Client, error) {
 		return nil, fmt.Errorf("client identifier cannot be empty")
 	}
 
-	var client Client
+	var client ClientCredential
 	var query string
 	var args []interface{}
 
@@ -143,7 +143,7 @@ func GetClient(db *sql.DB, tenantID, clientIdentifier string) (*Client, error) {
 }
 
 // ListClients lists all clients for a tenant, optionally filtered by stream
-func ListClients(db *sql.DB, tenantID string, streamID *string) ([]*Client, error) {
+func ListClients(db *sql.DB, tenantID string, streamID *string) ([]*ClientCredential, error) {
 	if tenantID == "" {
 		return nil, fmt.Errorf("tenant ID cannot be empty")
 	}
@@ -180,9 +180,9 @@ func ListClients(db *sql.DB, tenantID string, streamID *string) ([]*Client, erro
 	}
 	defer rows.Close()
 
-	var clients []*Client
+	var clients []*ClientCredential
 	for rows.Next() {
-		var client Client
+		var client ClientCredential
 		err := rows.Scan(
 			&client.ID,
 			&client.TenantID,
