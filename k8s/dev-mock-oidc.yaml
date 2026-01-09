@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frkr-mock-oidc
+  namespace: default
+  labels:
+    app: frkr-mock-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frkr-mock-oidc
+  template:
+    metadata:
+      labels:
+        app: frkr-mock-oidc
+    spec:
+      containers:
+      - name: mock-oidc
+        image: "ghcr.io/navikt/mock-oauth2-server:2.1.0"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: SERVER_PORT
+          value: "8080"
+        - name: LOG_LEVEL
+          value: "DEBUG"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frkr-mock-oidc
+  namespace: default
+spec:
+  selector:
+    app: frkr-mock-oidc
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// FrkrupFrkrupConfig holds the configuration for frkrup setup
-type FrkrupFrkrupConfig struct {
+// FrkrupConfig holds the configuration for frkrup setup
+type FrkrupConfig struct {
 	// Deployment mode
 	K8s              bool   `yaml:"k8s"`
 	K8sClusterName   string `yaml:"k8s_cluster_name"`
@@ -38,9 +38,8 @@ type FrkrupFrkrupConfig struct {
 	IngestHost    string `yaml:"ingest_host"`
 	StreamingHost string `yaml:"streaming_host"`
 
-	// Stream configuration
-	StreamName   string `yaml:"stream_name"`
-	CreateStream bool   `yaml:"create_stream"`
+	// Test configuration
+	TestOIDC bool `yaml:"test_oidc"`
 
 	// Paths
 	MigrationsPath string `yaml:"migrations_path"`
@@ -110,9 +109,7 @@ func applyDefaults(config *FrkrupConfig) {
 	if config.StreamingPort == 0 {
 		config.StreamingPort = 8081
 	}
-	if config.StreamName == "" {
-		config.StreamName = "my-api"
-	}
+
 	if config.MigrationsPath == "" {
 		// Use the robust path finder that uses Go modules
 		if path, err := findMigrationsPath(); err == nil {

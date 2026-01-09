@@ -134,22 +134,14 @@ func setupLocal(config *FrkrupConfig) error {
 	fmt.Println("✅ Migrations completed")
 
 	// Create stream if requested
-	if config.CreateStream {
-		fmt.Printf("\n📡 Creating stream '%s'...\n", config.StreamName)
-		stream, err := dbMgr.CreateStream(config.StreamName)
-		if err != nil {
-			fmt.Printf("⚠️  Stream creation failed (may already exist): %v\n", err)
-		} else {
-			fmt.Printf("✅ Stream '%s' created\n", config.StreamName)
-			// Create topic for the stream (Kafka Protocol compliant)
-			fmt.Printf("📦 Creating topic '%s'...\n", stream.Topic)
-			brokerMgr := NewBrokerManager(brokerURL)
-			if err := brokerMgr.CreateTopic(stream.Topic); err != nil {
-				fmt.Printf("⚠️  Topic creation failed (may already exist): %v\n", err)
-			} else {
-				fmt.Printf("✅ Topic '%s' created\n", stream.Topic)
-			}
+	// Test OIDC setup (start Mock Identity Provider)
+	if config.TestOIDC {
+		fmt.Println("\n📦 Starting Mock OIDC Provider (Local Docker)...")
+		infraMgr := NewInfrastructureManager(config)
+		if err := infraMgr.StartMockOIDC(); err != nil {
+			return fmt.Errorf("failed to start mock OIDC provider: %w", err)
 		}
+		fmt.Println("✅ Mock OIDC Provider started at http://localhost:8080")
 	}
 
 	// Start gateways

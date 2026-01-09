@@ -12,8 +12,6 @@ func promptConfig() (*FrkrupConfig, error) {
 	config := &FrkrupConfig{
 		IngestPort:    8082,
 		StreamingPort: 8081,
-		StreamName:    "my-api",
-		CreateStream:  true,
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -177,13 +175,11 @@ func promptConfig() (*FrkrupConfig, error) {
 		fmt.Sscanf(portStr, "%d", &config.StreamingPort)
 	}
 
-	// Stream name
-	fmt.Printf("Stream name [%s]: ", config.StreamName)
+	// Test OIDC Configuration
+	fmt.Print("Enable Test OIDC Provider? (yes/no) [no]: ")
 	scanner.Scan()
-	streamName := strings.TrimSpace(scanner.Text())
-	if streamName != "" {
-		config.StreamName = streamName
-	}
+	answer = strings.ToLower(strings.TrimSpace(scanner.Text()))
+	config.TestOIDC = answer == "yes" || answer == "y"
 
 	// Automatically determine migrations path using Go module resolution
 	migrationsPath, err := findMigrationsPath()
@@ -196,7 +192,7 @@ func promptConfig() (*FrkrupConfig, error) {
 }
 
 // promptCustomInfrastructure prompts for custom infrastructure configuration
-func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *FrkrupFrkrupConfig {
+func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *FrkrupConfig {
 	fmt.Println("\n📋 Custom Infrastructure Configuration:")
 	
 	// Database configuration

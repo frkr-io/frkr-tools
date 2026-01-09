@@ -139,6 +139,7 @@ func (im *InfrastructureManager) EnsureRunning() error {
 // checkDockerComposeHealth checks if Docker Compose containers are healthy
 // This is more reliable than port checking as it uses Docker's health check status
 func (im *InfrastructureManager) checkDockerComposeHealth(dockerPath string) (bool, error) {
+	// ... (implementation omitted for brevity in diff, but unchanged) ...
 	// Check container health status using docker compose ps
 	cmd := exec.Command("docker", "compose", "ps", "--format", "json")
 	cmd.Dir = dockerPath
@@ -179,6 +180,52 @@ func (im *InfrastructureManager) checkDockerComposeHealth(dockerPath string) (bo
 	}
 
 	return hasCockroach && hasRedpanda, nil
+}
+
+// StartMockOIDC starts the mock OIDC provider container
+func (im *InfrastructureManager) StartMockOIDC() error {
+	containerName := "frkr-mock-oidc"
+	imageName := "ghcr.io/navikt/mock-oauth2-server:2.1.0"
+
+	// Check if already running
+	cmd := exec.Command("docker", "ps", "--filter", "name="+containerName, "--format", "{{.ID}}")
+	output, err := cmd.Output()
+	if err == nil && strings.TrimSpace(string(output)) != "" {
+		fmt.Println("   Mock OIDC provider already running")
+		return nil
+	}
+
+	// Remove if exists but stopped
+	exec.Command("docker", "rm", "-f", containerName).Run()
+
+	// Start container
+	// docker run -d --name frkr-mock-oidc -p 8085:8080 -e SERVER_PORT=8080 ghcr.io/navikt/mock-oauth2-server:2.1.0
+	fmt.Printf("   Starting container %s on port 8085...\n", containerName)
+	runCmd := exec.Command("docker", "run", "-d", 
+		"--name", containerName,
+		"-p", "8085:8080",
+		"-e", "SERVER_PORT=8080",
+		imageName)
+	
+	runCmd.Stdout = os.Stdout
+	runCmd.Stderr = os.Stderr
+	if err := runCmd.Run(); err != nil {
+		return fmt.Errorf("failed to start mock OIDC container: %w", err)
+	}
+
+	// Wait for readiness
+	fmt.Print("   Waiting for Mock OIDC to be ready... ")
+	for i := 0; i < 30; i++ {
+		conn, err := net.DialTimeout("tcp", "localhost:8085", 1*time.Second)
+		if err == nil {
+			conn.Close()
+			fmt.Println("✅ ready")
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	
+	return fmt.Errorf("timed out waiting for mock OIDC provider")
 }
 
 // isPortOpen checks if a TCP port is open and accepting connections

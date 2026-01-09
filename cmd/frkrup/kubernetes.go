@@ -61,8 +61,13 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
-	// Install Gateway API CRDs (required for Envoy Gateway)
-	if err := km.installGatewayAPICRDs(); err != nil {
+	// Install Gateway API CRDs (Included in Envoy Gateway Helm Chart)
+	// if err := km.installGatewayAPICRDs(); err != nil {
+	// 	return err
+	// }
+
+	// Install Envoy Gateway (Infrastructure)
+	if err := km.installEnvoyGateway(); err != nil {
 		return err
 	}
 
@@ -72,7 +77,21 @@ func (km *KubernetesManager) Setup() error {
 	}
 
 	// Install helm chart
-	if err := km.installHelmChart(updatedImages); err != nil {
+	helmOverrides := make(map[string]string)
+	
+	// For dev/test automation, we only install Mock OIDC if explicitly requested
+	if km.config.TestOIDC {
+		if err := km.installMockOIDC(); err != nil {
+			fmt.Printf("⚠️  Failed to install mock OIDC provider: %v\n", err)
+		} else {
+			// If mock OIDC installed successfully, configure Helm to use it
+			mockIssuer := "http://frkr-mock-oidc.default.svc.cluster.local:8080/default"
+			helmOverrides["auth.oidc.issuerUrl"] = mockIssuer
+			fmt.Printf("   Configuring Helm to use Mock OIDC Issuer: %s\n", mockIssuer)
+		}
+	}
+
+	if err := km.installHelmChart(updatedImages, helmOverrides); err != nil {
 		return err
 	}
 
@@ -94,13 +113,7 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
-	// Create stream if requested
-	if km.config.CreateStream {
-		if err := km.createStreamAndTopic(); err != nil {
-			fmt.Printf("⚠️  Stream provisioning failed: %v\n", err)
-			// We don't fail the whole setup, but warn the user
-		}
-	}
+
 
 	// Configure external access if requested
 	if km.config.SkipPortForward && km.config.ExternalAccess != "none" {
@@ -383,7 +396,70 @@ func (km *KubernetesManager) installGatewayAPICRDs() error {
 	return nil
 }
 
-func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) error {
+// installEnvoyGateway installs Envoy Gateway
+func (km *KubernetesManager) installEnvoyGateway() error {
+	fmt.Println("\n📦 Installing Envoy Gateway...")
+
+	// Check if already installed
+	checkCmd := exec.Command("helm", "list", "-n", "envoy-gateway-system", "-q", "-f", "^eg$")
+	if output, err := checkCmd.Output(); err == nil && strings.TrimSpace(string(output)) == "eg" {
+		fmt.Println("✅ Envoy Gateway already installed")
+		return nil
+	}
+
+	// Install via Helm
+	// Using v1.0.0 for stability
+	// helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.0.0 -n envoy-gateway-system --create-namespace
+	cmd := exec.Command("helm", "install", "eg", "oci://docker.io/envoyproxy/gateway-helm", "--version", "v1.0.0", "-n", "envoy-gateway-system", "--create-namespace")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install Envoy Gateway: %w", err)
+	}
+
+	fmt.Println("✅ Envoy Gateway installed")
+	
+	// Wait for Envoy Gateway to be ready
+	fmt.Println("⏳ Waiting for Envoy Gateway to be ready...")
+	cmd = exec.Command("kubectl", "wait", "--for=condition=available", "deployment/envoy-gateway", "-n", "envoy-gateway-system", "--timeout=300s")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Println("⚠️  Envoy Gateway setup timed out, but proceeding...")
+	}
+
+	return nil
+}
+
+// installMockOIDC installs the mock OIDC provider for testing
+func (km *KubernetesManager) installMockOIDC() error {
+	fmt.Println("\n📦 Installing Mock OIDC Provider...")
+
+	// Find the manifest relative to the helm chart path
+	helmPath, err := findInfraRepoPath("helm")
+	if err != nil {
+		return fmt.Errorf("failed to find helm repo path: %w", err)
+	}
+	repoRoot := filepath.Dir(helmPath)
+	manifestPath := filepath.Join(repoRoot, "k8s", "dev-mock-oidc.yaml")
+
+	if _, err := os.Stat(manifestPath); err != nil {
+		return fmt.Errorf("mock OIDC manifest not found at %s: %w", manifestPath, err)
+	}
+
+	// Apply manifest
+	cmd := exec.Command("kubectl", "apply", "-f", manifestPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to apply mock OIDC manifest: %w", err)
+	}
+	
+	fmt.Println("✅ Mock OIDC Provider installed")
+	return nil
+}
+
+func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool, overrides map[string]string) error {
 	helmPath, err := findInfraRepoPath("helm")
 	if err != nil {
 		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
@@ -402,7 +478,14 @@ func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) err
 	}
 
 	// Use upgrade --install to handle both install and upgrade cases
-	helmCmd := exec.Command("helm", "upgrade", "--install", "frkr", ".", "-f", "values-full.yaml")
+	args := []string{"upgrade", "--install", "frkr", ".", "-f", "values-full.yaml"}
+	
+	// Apply overrides
+	for k, v := range overrides {
+		args = append(args, "--set", fmt.Sprintf("%s=%s", k, v))
+	}
+	
+	helmCmd := exec.Command("helm", args...)
 	helmCmd.Dir = helmPath
 	helmCmd.Stdout = os.Stdout
 	helmCmd.Stderr = os.Stderr
@@ -887,59 +970,4 @@ spec:
 	return nil // Don't fail - Ingress is created, just waiting for address
 }
 
-// createStreamAndTopic provisions the initial stream and topic in Kubernetes
-func (km *KubernetesManager) createStreamAndTopic() error {
-	fmt.Printf("\n📡 Provisioning stream '%s' in Kubernetes...\n", km.config.StreamName)
 
-	// 1. Setup temporary port-forwarding for database and broker
-	
-	// DB Port forward
-	fmt.Printf("   Setting up temporary port-forward for database (svc/frkr-cockroachdb:26257)...\n")
-	dbCmd := exec.Command("kubectl", "port-forward", "svc/frkr-cockroachdb", fmt.Sprintf("%s:26257", km.config.DBPort))
-	if err := dbCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start database port-forward: %w", err)
-	}
-	defer dbCmd.Process.Kill()
-
-	// Broker Port forward
-	fmt.Printf("   Setting up temporary port-forward for broker (svc/frkr-redpanda:9092)...\n")
-	brokerCmd := exec.Command("kubectl", "port-forward", "svc/frkr-redpanda", fmt.Sprintf("%s:9092", km.config.BrokerPort))
-	if err := brokerCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start broker port-forward: %w", err)
-	}
-	defer brokerCmd.Process.Kill()
-
-	// Wait for port forwards to be ready and verified
-	time.Sleep(5 * time.Second)
-
-	// 2. Build URLs
-	// Use local ports established via port-forward
-	oldDBHost := km.config.DBHost
-	oldBrokerHost := km.config.BrokerHost
-	km.config.DBHost = "localhost"
-	km.config.BrokerHost = "localhost"
-	defer func() {
-		km.config.DBHost = oldDBHost
-		km.config.BrokerHost = oldBrokerHost
-	}()
-
-	dbURL := km.config.BuildDBURL()
-	brokerURL := km.config.BuildBrokerURL()
-
-	// 3. Create stream in database
-	dbMgr := NewDatabaseManager(dbURL)
-	stream, err := dbMgr.CreateStream(km.config.StreamName)
-	if err != nil {
-		return fmt.Errorf("failed to create stream in database: %w", err)
-	}
-	fmt.Printf("   ✅ Stream '%s' created in database\n", km.config.StreamName)
-
-	// 4. Create topic in broker
-	brokerMgr := NewBrokerManager(brokerURL)
-	if err := brokerMgr.CreateTopic(stream.Topic); err != nil {
-		return fmt.Errorf("failed to create topic in broker: %w", err)
-	}
-	fmt.Printf("   ✅ Topic '%s' created in broker\n", stream.Topic)
-
-	return nil
-}

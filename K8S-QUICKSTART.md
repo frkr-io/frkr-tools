@@ -90,8 +90,7 @@ make kind-up deploy
 3. **Build & Load**: Builds Docker images for gateways and operator, and loads them into the cluster
 4. **Automated Deployment**: Installs the Helm chart (Infrastructure, Operator, Gateways)
 5. **Automated Migrations**: Waits for the Helm migration job to complete automatically
-6. **Operator Reconciliation**: The `frkr-operator` automatically creates necessary tenants and Kafka topics
-7. **Port Forwarding**: For kind clusters, automatically sets up port forwarding for local access
+6. **Port Forwarding**: For kind clusters, automatically sets up port forwarding for local access
 
 **Simplified prompts:**
 - **First question**: "Deploy to Kubernetes? (yes/no) [yes/no]"
@@ -125,7 +124,37 @@ When deploying to a managed Kubernetes cluster (e.g., EKS, GKE, AKS):
 
 ---
 
-## Step 4: Start Example API
+```
+
+---
+
+## Step 4: Configure Stream & User
+
+Since `frkr` is secure by default, you need to create a stream and a user to access it.
+
+**In a new terminal:**
+
+```bash
+cd frkr-tools
+
+# Build the configuration tool if needed
+make build
+
+# 1. Create a Stream (via K8s port-forward)
+# frkrup maintains DB port-forward on :26257 for Kind clusters
+./bin/frkrcfg stream create my-api \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+
+# 2. Create a User (for CLI access)
+# frkrup maintains DB port-forward on :26257 for Kind clusters
+./bin/frkrcfg user create testuser \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --password="testpass"
+```
+
+---
+
+## Step 5: Start Example API
 
 **In a new terminal:**
 
@@ -197,40 +226,19 @@ Watch the `frkr-example-api` terminal - you'll see mirrored requests labeled as 
 
 ### Create Users for CLI Authentication
 
-To use the `frkr` CLI with authentication, you can create users via the operator or directly in the database.
+To create additional users for CLI access:
 
-**Option 1: Using Kubernetes Operator (Recommended)**
-```bash
-# Create a user via the operator (creates FrkrUser CRD)
-kubectl apply -f - <<EOF
-apiVersion: frkr.io/v1
-kind: FrkrUser
-metadata:
-  name: streamuser
-  namespace: default
-spec:
-  username: streamuser
-  tenantID: ""  # Will use default tenant
-EOF
-
-# Check the user status to get the generated password
-kubectl get frkruser streamuser -o yaml
-# The password will be in the status.password field (one-time display)
-```
-
-**Option 2: Using frkrcfg (Direct DB Access)**
 ```bash
 cd frkr-tools
 
-# Port forward to the database (if not using external access)
-kubectl port-forward svc/frkr-cockroachdb 26257:26257 &
-
-# Get the database connection details
-# For CockroachDB in Kubernetes, you'll need to connect via port-forward or service
-./bin/frkrcfg user create streamuser \
+# frkrup maintains DB port-forward on :26257 for Kind clusters
+./bin/frkrcfg user create another-user \
   --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --password="your-secure-password"
+  --password="secure-password"
 ```
+
+**Note:** Save the password! It won't be shown again.
+
 
 You can then use these credentials with the CLI:
 ```bash

@@ -40,7 +40,6 @@ make build
    - Auto-detect running services on default ports
    - Start CockroachDB and Redpanda (if needed)
    - Run database migrations automatically
-   - Create the default stream (`my-api`)
    - Start both gateways
    - Stream gateway logs with health check status
 
@@ -60,7 +59,32 @@ make build
 
 ---
 
-## Step 3: Start Example API
+## Step 3: Configure Stream & User
+
+Since `frkr` is secure by default, you need to create a stream and a user to access it.
+
+**In a new terminal:**
+
+```bash
+cd frkr-tools
+
+# Build the configuration tool
+make build
+
+# 1. Create a Stream
+./bin/frkrcfg stream create my-api \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+
+# 2. Create a User (for CLI access)
+# Save the password! You'll need it shortly.
+./bin/frkrcfg user create testuser \
+  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --password="testpass"
+```
+
+---
+
+## Step 4: Start Example API
 
 **In a new terminal:**
 

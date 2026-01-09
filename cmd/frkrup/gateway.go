@@ -65,7 +65,15 @@ func (gm *GatewaysManager) StartGateway(ctx context.Context, gatewayType string,
 		fmt.Sprintf("DB_URL=%s", dbURL),
 		fmt.Sprintf("BROKER_URL=%s", brokerURL),
 	)
-	// Also pass as flags (gateway will prefer env vars if both are set)
+	
+	// Inject Test OIDC configuration if enabled
+	if gm.config.TestOIDC {
+		cmd.Env = append(cmd.Env, "AUTH_TYPE=oidc")
+		// Mock OIDC issuer - though only trusted header plugin is used which blindly decodes,
+		// we set this for completeness or future use.
+		cmd.Env = append(cmd.Env, "OIDC_ISSUER_URL=http://localhost:8085/default")
+		fmt.Printf("   [DEBUG] Enabled Test OIDC mode (AUTH_TYPE=oidc)\n")
+	}
 	cmd.Args = append(cmd.Args,
 		"--http-port", fmt.Sprintf("%d", port),
 		"--db-url", dbURL,
