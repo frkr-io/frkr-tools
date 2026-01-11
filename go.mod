@@ -3,7 +3,7 @@ module github.com/frkr-io/frkr-tools
 go 1.24.0
 
 require (
-	github.com/frkr-io/frkr-common v0.2.1
+	github.com/frkr-io/frkr-common v0.2.2
 	github.com/golang-migrate/migrate/v4 v4.17.0
 	github.com/lib/pq v1.10.9
 	github.com/segmentio/kafka-go v0.4.49
