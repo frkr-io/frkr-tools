@@ -1,6 +1,6 @@
 module github.com/frkr-io/frkr-tools
 
-go 1.24.0
+go 1.25.5
 
 require (
 	github.com/frkr-io/frkr-common v0.2.2

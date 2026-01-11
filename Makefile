@@ -15,9 +15,9 @@ help:
 
 build:
 	@mkdir -p bin
-	cd frkr-ingest-gateway && go build -o bin/gateway ./cmd/gateway
-	cd frkr-streaming-gateway && go build -o bin/gateway ./cmd/gateway
-	cd frkr-operator && make build-operator
+	cd frkr-ingest-gateway && GOWORK=off go build -o bin/gateway ./cmd/gateway
+	cd frkr-streaming-gateway && GOWORK=off go build -o bin/gateway ./cmd/gateway
+	cd frkr-operator && GOWORK=off $(MAKE) build-operator
 	go build -o bin/frkrup ./cmd/frkrup
 	go build -o bin/frkrcfg ./cmd/frkrcfg
 
@@ -35,18 +35,17 @@ load-images:
 	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr-dev
 	kind load docker-image frkr-operator:0.1.1 --name frkr-dev
 
-sync-migrations:
 	@echo "Resolving frkr-common path and syncing migrations..."
-	@cd frkr-infra-helm && \
-		COMMON_PATH=$$(go list -m -f '{{.Dir}}' github.com/frkr-io/frkr-common 2>/dev/null) || \
-		COMMON_PATH=../frkr-common; \
-		if [ ! -d "$$COMMON_PATH/migrations" ]; then \
-			echo "Error: migrations directory not found at $$COMMON_PATH/migrations"; \
-			exit 1; \
-		fi; \
-		mkdir -p migrations && \
-		cp $$COMMON_PATH/migrations/*.up.sql migrations/ && \
-		echo "✅ Synced migrations from $$COMMON_PATH/migrations to frkr-infra-helm/migrations"
+	@COMMON_PATH=$$(go list -m -f '{{.Dir}}' github.com/frkr-io/frkr-common 2>/dev/null) || \
+		COMMON_PATH=$$(pwd)/../frkr-common; \
+	if [ ! -d "$$COMMON_PATH/migrations" ]; then \
+		echo "Error: migrations directory not found at $$COMMON_PATH/migrations"; \
+		exit 1; \
+	fi; \
+	cd frkr-infra-helm && \
+	mkdir -p migrations && \
+	cp $$COMMON_PATH/migrations/*.up.sql migrations/ && \
+	echo "✅ Synced migrations from $$COMMON_PATH/migrations to frkr-infra-helm/migrations"
 
 deploy: sync-migrations
 	helm upgrade --install frkr frkr-infra-helm -f frkr-infra-helm/values-full.yaml

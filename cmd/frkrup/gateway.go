@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -41,26 +40,25 @@ type CheckResult struct {
 
 // StartGateway starts a gateway process
 func (gm *GatewaysManager) StartGateway(ctx context.Context, gatewayType string, port int, dbURL, brokerURL string) (*exec.Cmd, io.ReadCloser, io.ReadCloser) {
-	gatewayPath, err := findGatewayPath(gatewayType)
+	repoPath, err := findGatewayRepoPath(gatewayType)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Failed to find gateway: %v\n", err)
 		return nil, nil, nil
 	}
 
-	// Get the directory containing the gateway main.go
-	gatewayDir := gatewayPath
-	mainFile := filepath.Join(gatewayDir, "main.go")
-
 	// Debug: print what we're passing to the gateway
 	fmt.Printf("   [DEBUG] Starting %s gateway:\n", gatewayType)
-	fmt.Printf("   [DEBUG]   Dir: %s\n", gatewayDir)
+	fmt.Printf("   [DEBUG]   Dir: %s\n", repoPath)
 	fmt.Printf("   [DEBUG]   DB_URL: %s\n", dbURL)
 	fmt.Printf("   [DEBUG]   BROKER_URL: %s\n", brokerURL)
 
-	cmd := exec.CommandContext(ctx, "go", "run", mainFile)
-	cmd.Dir = gatewayDir
+	// Run from module root with package path (required for internal packages)
+	cmd := exec.CommandContext(ctx, "go", "run", "./cmd/gateway")
+	cmd.Dir = repoPath
 	// Set environment variables for gateways (these override flags in 12-factor pattern)
+	// Also set GOWORK=off to prevent parent workspace from interfering with submodule execution
 	cmd.Env = append(os.Environ(),
+		"GOWORK=off",
 		fmt.Sprintf("HTTP_PORT=%d", port),
 		fmt.Sprintf("DB_URL=%s", dbURL),
 		fmt.Sprintf("BROKER_URL=%s", brokerURL),
