@@ -19,6 +19,13 @@ type FrkrupConfig struct {
 	IngressHost      string `yaml:"ingress_host"`
 	IngressTLSSecret string `yaml:"ingress_tls_secret"`
 
+	// TLS/CertManager configuration
+	InstallCertManager bool   `yaml:"install_cert_manager"`
+	CertManagerEmail   string `yaml:"cert_manager_email"`
+	CertIssuerName     string `yaml:"cert_issuer_name"`
+	CertIssuerServer   string `yaml:"cert_issuer_server"`
+	IngressClassName   string `yaml:"ingress_class_name"`
+
 	// Database configuration
 	DBHost     string `yaml:"db_host"`
 	DBPort     string `yaml:"db_port"`
@@ -108,6 +115,17 @@ func applyDefaults(config *FrkrupConfig) {
 	}
 	if config.StreamingPort == 0 {
 		config.StreamingPort = 8081
+	}
+
+	if config.StreamingPort == 0 {
+		config.StreamingPort = 8081
+	}
+
+	if config.CertIssuerName == "" {
+		config.CertIssuerName = "letsencrypt-prod"
+	}
+	if config.CertIssuerServer == "" {
+		config.CertIssuerServer = "https://acme-v02.api.letsencrypt.org/directory"
 	}
 
 	if config.MigrationsPath == "" {

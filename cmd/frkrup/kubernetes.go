@@ -61,10 +61,13 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
-	// Install Gateway API CRDs (Included in Envoy Gateway Helm Chart)
-	// if err := km.installGatewayAPICRDs(); err != nil {
-	// 	return err
-	// }
+
+	// Install Cert-Manager (if requested)
+	if km.config.InstallCertManager {
+		if err := km.installCertManager(); err != nil {
+			return err
+		}
+	}
 
 	// Install Envoy Gateway (Infrastructure)
 	if err := km.installEnvoyGateway(); err != nil {
@@ -119,6 +122,14 @@ func (km *KubernetesManager) Setup() error {
 	if km.config.SkipPortForward && km.config.ExternalAccess != "none" {
 		if err := km.configureExternalAccess(); err != nil {
 			return fmt.Errorf("external access configuration failed: %w", err)
+		}
+		
+		// Configure ClusterIssuer if requested (must be after external access setup for Ingress checks if needed, but here is fine)
+		// We do this after external access because usually we need the ingress class/gateway to be ready
+		if km.config.InstallCertManager && km.config.CertManagerEmail != "" {
+			if err := km.configureClusterIssuer(); err != nil {
+				return fmt.Errorf("failed to configure ClusterIssuer: %w", err)
+			}
 		}
 	}
 
@@ -370,31 +381,6 @@ func (km *KubernetesManager) syncMigrations() error {
 	return nil
 }
 
-// installGatewayAPICRDs installs the Kubernetes Gateway API CRDs required for Envoy Gateway
-func (km *KubernetesManager) installGatewayAPICRDs() error {
-	fmt.Println("\n📦 Installing Gateway API CRDs...")
-	
-	// Check if CRDs are already installed
-	checkCmd := exec.Command("kubectl", "get", "crd", "gateways.gateway.networking.k8s.io")
-	if err := checkCmd.Run(); err == nil {
-		fmt.Println("✅ Gateway API CRDs already installed")
-		return nil
-	}
-
-	// Install Gateway API CRDs from official release
-	const gatewayAPIVersion = "v1.1.0"
-	crdURL := fmt.Sprintf("https://github.com/kubernetes-sigs/gateway-api/releases/download/%s/standard-install.yaml", gatewayAPIVersion)
-	
-	cmd := exec.Command("kubectl", "apply", "-f", crdURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to install Gateway API CRDs: %w", err)
-	}
-	
-	fmt.Println("✅ Gateway API CRDs installed")
-	return nil
-}
 
 // installEnvoyGateway installs Envoy Gateway
 func (km *KubernetesManager) installEnvoyGateway() error {
@@ -849,28 +835,34 @@ func (km *KubernetesManager) configureLoadBalancer() error {
 func (km *KubernetesManager) configureIngress() error {
 	fmt.Println("\n🔧 Configuring Ingress...")
 
-	// Check if an Ingress controller is available and get ingressClassName
-	fmt.Println("   Checking for Ingress controller...")
-	cmd := exec.Command("kubectl", "get", "ingressclass", "-o", "jsonpath={.items[0].metadata.name}")
-	output, err := cmd.Output()
-	ingressClassName := ""
-	if err == nil && len(output) > 0 {
-		ingressClassName = strings.TrimSpace(string(output))
-		fmt.Printf("   ✅ Ingress controller detected: %s\n", ingressClassName)
+	// Determine IngressClass
+	var ingressClassName string
+	if km.config.IngressClassName != "" {
+		ingressClassName = km.config.IngressClassName
+		fmt.Printf("   Using configured IngressClass: %s\n", ingressClassName)
 	} else {
-		fmt.Println("   ⚠️  No IngressClass found. You may need to install an Ingress controller.")
-		fmt.Println("      Common options: nginx-ingress, traefik, or cloud-specific controllers")
-		fmt.Print("   Continue anyway? (yes/no) [yes]: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-		if answer == "no" || answer == "n" {
-			return fmt.Errorf("ingress setup cancelled")
+		// Auto-detect if not configured
+		fmt.Println("   Checking for Ingress controller...")
+		cmd := exec.Command("kubectl", "get", "ingressclass", "-o", "jsonpath={.items[0].metadata.name}")
+		output, err := cmd.Output()
+		if err == nil && len(output) > 0 {
+			ingressClassName = strings.TrimSpace(string(output))
+			fmt.Printf("   ✅ Ingress controller detected: %s\n", ingressClassName)
+		} else {
+			fmt.Println("   ⚠️  No IngressClass found. You may need to install an Ingress controller.")
+			fmt.Println("      Common options: nginx-ingress, traefik, or cloud-specific controllers")
+			fmt.Print("   Continue anyway? (yes/no) [yes]: ")
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			if answer == "no" || answer == "n" {
+				return fmt.Errorf("ingress setup cancelled")
+			}
+			// Ask for ingressClassName manually
+			fmt.Print("   IngressClass name (optional, press Enter to skip): ")
+			scanner.Scan()
+			ingressClassName = strings.TrimSpace(scanner.Text())
 		}
-		// Ask for ingressClassName manually
-		fmt.Print("   IngressClass name (optional, press Enter to skip): ")
-		scanner.Scan()
-		ingressClassName = strings.TrimSpace(scanner.Text())
 	}
 
 	// Create Ingress resource
@@ -880,12 +872,18 @@ func (km *KubernetesManager) configureIngress() error {
 	}
 
 	ingressTLSField := ""
+	ingressAnnotations := ""
 	if km.config.IngressTLSSecret != "" {
 		ingressTLSField = fmt.Sprintf(`  tls:
   - hosts:
     - %s
     secretName: %s
 `, km.config.IngressHost, km.config.IngressTLSSecret)
+
+		// Add cert-manager annotation if we have an issuer configurd (even default)
+		if km.config.CertIssuerName != "" {
+			ingressAnnotations = fmt.Sprintf("    cert-manager.io/cluster-issuer: %s\n", km.config.CertIssuerName)
+		}
 	}
 
 	ingressYAML := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
@@ -894,6 +892,8 @@ metadata:
   name: frkr-gateways
   labels:
     app.kubernetes.io/name: frkr
+  annotations:
+%s
 spec:
 %s  rules:
   - host: %s
@@ -913,10 +913,10 @@ spec:
             name: frkr-streaming-gateway
             port:
               number: 8081
-%s`, ingressClassNameField, ingressTLSField, km.config.IngressHost)
+%s`, ingressAnnotations, ingressClassNameField, km.config.IngressHost, ingressTLSField)
 
 	fmt.Printf("   Creating Ingress resource for host: %s\n", km.config.IngressHost)
-	cmd = exec.Command("kubectl", "apply", "-f", "-")
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
 	cmd.Stdin = strings.NewReader(ingressYAML)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -970,4 +970,82 @@ spec:
 	return nil // Don't fail - Ingress is created, just waiting for address
 }
 
+// installCertManager installs cert-manager from the official manifest
+func (km *KubernetesManager) installCertManager() error {
+	fmt.Println("\n📦 Installing Cert-Manager...")
 
+	// Check if already installed
+	checkCmd := exec.Command("kubectl", "get", "pods", "-n", "cert-manager")
+	if err := checkCmd.Run(); err == nil {
+		fmt.Println("✅ Cert-Manager seems to be installed (namespace exists)")
+		return nil
+	}
+
+	// Install via kubectl apply
+	// Using v1.14.4 as verified stable
+	manifestURL := "https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml"
+	
+	cmd := exec.Command("kubectl", "apply", "-f", manifestURL)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install cert-manager: %w", err)
+	}
+
+	fmt.Println("✅ Cert-Manager manifests applied")
+	
+	// Wait for Cert-Manager webhook to be ready (critical for ClusterIssuer)
+	fmt.Println("⏳ Waiting for Cert-Manager webhook to be ready...")
+	cmd = exec.Command("kubectl", "wait", "--for=condition=Available", "deployment/cert-manager-webhook", "-n", "cert-manager", "--timeout=300s")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Println("⚠️  Cert-Manager webhook setup timed out, but proceeding...")
+	} else {
+		// Extra sleep to ensure webhook service is actually reachable
+		time.Sleep(10 * time.Second)
+	}
+
+	return nil
+}
+
+// configureClusterIssuer creates a Let's Encrypt ClusterIssuer
+func (km *KubernetesManager) configureClusterIssuer() error {
+	fmt.Printf("\n🔒 Configuring ClusterIssuer '%s' (%s)...\n", km.config.CertIssuerName, km.config.CertManagerEmail)
+
+	ingressClass := km.config.IngressClassName
+	if ingressClass == "" {
+		ingressClass = "envoy"
+	}
+
+	issuerYAML := fmt.Sprintf(`apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: %s
+spec:
+  acme:
+    email: %s
+    server: %s
+    privateKeySecretRef:
+      name: %s
+    solvers:
+    - http01:
+        ingress:
+          class: %s`, 
+		km.config.CertIssuerName, 
+		km.config.CertManagerEmail, 
+		km.config.CertIssuerServer,
+		km.config.CertIssuerName,
+		ingressClass)
+
+	cmd := exec.Command("kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(issuerYAML)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to create ClusterIssuer: %w", err)
+	}
+
+	fmt.Println("✅ ClusterIssuer 'letsencrypt-prod' created")
+	return nil
+}
