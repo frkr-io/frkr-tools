@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	configFile     = flag.String("config", "", "Path to YAML config file (non-interactive mode)")
-	nonInteractive = flag.Bool("y", false, "Run in non-interactive mode using defaults")
+	configFile     = flag.String("config", "", "Path to YAML config file")
 )
 
 func main() {
@@ -29,14 +28,6 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("📄 Loaded configuration from %s\n", *configFile)
-	} else if *nonInteractive {
-		fmt.Println("🤖 Running in non-interactive mode with defaults...")
-		config, err = generateDefaultConfig()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating default config: %v\n", err)
-			os.Exit(1)
-		}
-		applyDefaults(config)
 	} else {
 		config, err = promptConfig()
 		if err != nil {
