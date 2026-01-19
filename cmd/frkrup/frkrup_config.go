@@ -99,13 +99,13 @@ func applyDefaults(config *FrkrupConfig) {
 	// Note: DBHost and BrokerHost are REQUIRED - no defaults
 	// They must be explicitly set in config file or via prompts
 	if config.DBPort == "" {
-		config.DBPort = "26257"
+		config.DBPort = "5432"
 	}
 	if config.DBUser == "" {
 		config.DBUser = "root"
 	}
 	if config.DBName == "" {
-		config.DBName = "frkrdb"
+		config.DBName = "frkr"
 	}
 	if config.BrokerPort == "" {
 		config.BrokerPort = "19092"

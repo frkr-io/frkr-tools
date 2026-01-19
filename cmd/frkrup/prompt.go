@@ -105,7 +105,7 @@ func promptConfig() (*FrkrupConfig, error) {
 
 	// Auto-detect if services are running using actual service checkers
 	// This is more reliable than port checking - we verify services actually work
-	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
+	dbURL := "postgres://root:password@localhost:5432/frkr?sslmode=disable"
 	brokerURL := "localhost:19092"
 	
 	dbChecker := NewDatabaseChecker()
@@ -117,7 +117,7 @@ func promptConfig() (*FrkrupConfig, error) {
 	
 	if dbReady && brokerReady {
 		fmt.Println("✅ Detected running services on default ports")
-		fmt.Println("   Database: localhost:26257")
+		fmt.Println("   Database: localhost:5432")
 		fmt.Println("   Broker: localhost:19092")
 		fmt.Print("\nUse detected services? (yes/no) [yes]: ")
 		scanner.Scan()
@@ -125,10 +125,10 @@ func promptConfig() (*FrkrupConfig, error) {
 		if answer == "" || answer == "yes" || answer == "y" {
 			// Use defaults
 			config.DBHost = "localhost"
-			config.DBPort = "26257"
+			config.DBPort = "5432"
 			config.DBUser = "root"
-			config.DBPassword = ""
-			config.DBName = "frkrdb"
+			config.DBPassword = "password"
+			config.DBName = "frkr"
 			config.BrokerHost = "localhost"
 			config.BrokerPort = "19092"
 			config.BrokerUser = ""
@@ -146,10 +146,10 @@ func promptConfig() (*FrkrupConfig, error) {
 		if answer == "" || answer == "yes" || answer == "y" {
 			// Use defaults
 			config.DBHost = "localhost"
-			config.DBPort = "26257"
+			config.DBPort = "5432"
 			config.DBUser = "root"
-			config.DBPassword = ""
-			config.DBName = "frkrdb"
+			config.DBPassword = "password"
+			config.DBName = "frkr"
 			config.BrokerHost = "localhost"
 			config.BrokerPort = "19092"
 			config.BrokerUser = ""
@@ -203,11 +203,11 @@ func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *F
 		config.DBHost = "localhost"
 	}
 
-	fmt.Print("Database port [26257]: ")
+	fmt.Print("Database port [5432]: ")
 	scanner.Scan()
 	config.DBPort = strings.TrimSpace(scanner.Text())
 	if config.DBPort == "" {
-		config.DBPort = "26257"
+		config.DBPort = "5432"
 	}
 
 	fmt.Print("Database user (optional) [root]: ")
@@ -217,12 +217,17 @@ func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *F
 		config.DBUser = "root"
 	}
 
-	fmt.Print("Database password (optional): ")
+	fmt.Print("Database password (optional) [password]: ")
 	scanner.Scan()
-	config.DBPassword = strings.TrimSpace(scanner.Text())
+	pass := strings.TrimSpace(scanner.Text())
+	if pass == "" {
+		config.DBPassword = "password"
+	} else {
+		config.DBPassword = pass
+	}
 
-	// Database name is hard-coded to "frkrdb" to match gateways and other components
-	config.DBName = "frkrdb"
+	// Database name is hard-coded to "frkr" to match gateways and other components
+	config.DBName = "frkr"
 
 	// Broker configuration
 	fmt.Print("Broker host [localhost]: ")
@@ -248,4 +253,61 @@ func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *F
 	config.BrokerPassword = strings.TrimSpace(scanner.Text())
 	
 	return config
+}
+// generateDefaultConfig creates a configuration using robust defaults without prompting
+func generateDefaultConfig() (*FrkrupConfig, error) {
+	config := &FrkrupConfig{
+		IngestPort:    8082,
+		StreamingPort: 8081,
+	}
+
+	// Auto-detect K8s
+	if isKubernetesAvailable() {
+		config.K8s = true
+		
+		// Auto-detect Kind
+		isKind := isKindCluster()
+		
+		// Default port forwarding logic
+		if isKind {
+			config.SkipPortForward = false // Use port forwarding for Kind
+		} else {
+			config.SkipPortForward = true  // No port forwarding for others
+		}
+
+		if config.SkipPortForward {
+			// specific defaults for non-port-forward
+			config.ExternalAccess = "loadbalancer" // Default choice
+		} else {
+			config.ExternalAccess = "none"
+		}
+
+		// K8s defaults
+		config.DBHost = "localhost"
+		config.BrokerHost = "localhost"
+
+	} else {
+		// Local mode defaults
+		config.K8s = false
+		
+		// Default services
+		config.DBHost = "localhost"
+		config.DBPort = "5432"
+		config.DBUser = "root"
+		config.DBPassword = "password"
+		config.DBName = "frkr"
+		config.BrokerHost = "localhost"
+		config.BrokerPort = "19092"
+		config.BrokerUser = ""
+		config.BrokerPassword = ""
+	}
+
+	// Find migrations
+	migrationsPath, err := findMigrationsPath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find migrations: %w", err)
+	}
+	config.MigrationsPath = migrationsPath
+
+	return config, nil
 }

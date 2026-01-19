@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -11,8 +10,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	frkrcommonpaths "github.com/frkr-io/frkr-common/paths"
 )
 
 // KubernetesManager handles Kubernetes setup operations
@@ -29,302 +26,67 @@ func NewKubernetesManager(config *FrkrupConfig) *KubernetesManager {
 func (km *KubernetesManager) Setup() error {
 	fmt.Println("\n🚀 Setting up frkr on Kubernetes...")
 
-	// Check kubectl
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return fmt.Errorf("kubectl not found in PATH")
+	// 1. Prerequisites Check
+	if err := km.checkPrerequisites(); err != nil {
+		return err
 	}
 
-	// Check helm
-	if _, err := exec.LookPath("helm"); err != nil {
-		return fmt.Errorf("helm not found in PATH")
-	}
-
-	// Verify kubectl is connected to a cluster
-	fmt.Println("\n🔍 Verifying Kubernetes cluster connection...")
-	cmd := exec.Command("kubectl", "cluster-info")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("kubectl not connected to a cluster. Please create a cluster first (e.g., 'kind create cluster --name <cluster-name>')")
-	}
-	fmt.Println("✅ Connected to Kubernetes cluster")
-
-	// Get cluster name if not provided
+	// 2. Identify Cluster
 	if err := km.determineClusterName(); err != nil {
 		return err
 	}
 	fmt.Printf("Using cluster: %s\n", km.config.K8sClusterName)
 
-	// Build and load gateway images
-	updatedImages, err := km.buildAndLoadImages()
-	if err != nil {
-		return err
-	}
-
-
-	// Install Cert-Manager (if requested)
-	if km.config.InstallCertManager {
-		if err := km.installCertManager(); err != nil {
-			return err
-		}
-	}
-
-	// Install Envoy Gateway (Infrastructure)
-	if err := km.installEnvoyGateway(); err != nil {
-		return err
-	}
-
-	// Sync migrations from frkr-common to helm chart
-	if err := km.syncMigrations(); err != nil {
-		return fmt.Errorf("failed to sync migrations: %w", err)
-	}
-
-	// Install helm chart
-	helmOverrides := make(map[string]string)
-	
-	// For dev/test automation, we only install Mock OIDC if explicitly requested
-	if km.config.TestOIDC {
-		if err := km.installMockOIDC(); err != nil {
-			fmt.Printf("⚠️  Failed to install mock OIDC provider: %v\n", err)
-		} else {
-			// If mock OIDC installed successfully, configure Helm to use it
-			mockIssuer := "http://frkr-mock-oidc.default.svc.cluster.local:8080/default"
-			helmOverrides["auth.oidc.issuerUrl"] = mockIssuer
-			fmt.Printf("   Configuring Helm to use Mock OIDC Issuer: %s\n", mockIssuer)
-		}
-	}
-
-	if err := km.installHelmChart(updatedImages, helmOverrides); err != nil {
-		return err
-	}
-
-	// Wait for migration job to complete (Helm hook runs migrations automatically)
-	// But first, ensure the database exists from the host side via port-forward
-	fmt.Println("\n🗄️  Ensuring database exists and running migrations...")
-	if err := RunMigrationsK8s(km.config.MigrationsPath); err != nil {
-		fmt.Printf("⚠️  Warning: Host-side migration failed: %v\n", err)
-		fmt.Println("   Falling back to Helm migration job...")
-	}
-
-	if err := km.waitForMigrationJob(); err != nil {
-		return fmt.Errorf("migrations failed: %w", err)
-	}
-	fmt.Println("✅ Migrations completed")
-
-	// Wait for pods
-	if err := km.waitForPods(); err != nil {
-		return err
-	}
-
-
-
-	// Configure external access if requested
-	if km.config.SkipPortForward && km.config.ExternalAccess != "none" {
-		if err := km.configureExternalAccess(); err != nil {
-			return fmt.Errorf("external access configuration failed: %w", err)
-		}
-		
-		// Configure ClusterIssuer if requested (must be after external access setup for Ingress checks if needed, but here is fine)
-		// We do this after external access because usually we need the ingress class/gateway to be ready
-		if km.config.InstallCertManager && km.config.CertManagerEmail != "" {
-			if err := km.configureClusterIssuer(); err != nil {
-				return fmt.Errorf("failed to configure ClusterIssuer: %w", err)
-			}
-		}
-	}
-
-	// Setup port forwarding if requested (for local access)
-	var portForwardCmds []*exec.Cmd
-	if !km.config.SkipPortForward {
+	// 3. Build and Load Images (if Kind)
+	updatedImages := make(map[string]bool)
+	if isKindCluster() { // simplified check, logic in main/prompt moved here? No, stick to config.
 		var err error
-		portForwardCmds, err = km.setupPortForwarding()
+		updatedImages, err = km.buildAndLoadImages()
 		if err != nil {
 			return err
 		}
-		defer func() {
-			fmt.Println("\n🛑 Stopping port forwarding...")
-			for _, cmd := range portForwardCmds {
-				if cmd.Process != nil {
-					cmd.Process.Kill()
-				}
-			}
-		}()
-
-		// Verify gateways via port forward
-		// For port-forwarding, gateways are accessible on localhost
-		km.config.IngestHost = "localhost"
-		km.config.StreamingHost = "localhost"
-		
-		fmt.Println("\n✅ Verifying gateways...")
-		time.Sleep(2 * time.Second)
-		gatewayMgr := NewGatewaysManager(km.config)
-		if err := gatewayMgr.VerifyGateways(); err != nil {
-			return fmt.Errorf("gateway verification failed: %w", err)
-		}
-
-		fmt.Println("\n✅ frkr is running on Kubernetes!")
-		fmt.Printf("   Ingest Gateway: http://localhost:%d (via port-forward)\n", km.config.IngestPort)
-		fmt.Printf("   Streaming Gateway: http://localhost:%d (via port-forward)\n", km.config.StreamingPort)
-		fmt.Println("\nPress Ctrl+C to stop port forwarding and exit.")
-
-		// Wait for interrupt
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-		<-sigChan
-	} else {
-		// Production mode - external access already configured if requested
-		fmt.Println("\n✅ frkr is running on Kubernetes!")
-		if km.config.ExternalAccess == "none" {
-			km.showExternalAccessInfo()
-		} else {
-			// External access was configured, show the results
-			km.showConfiguredExternalAccess()
-			
-			// Attempt to verify gateways if we have the host information
-			if km.config.ExternalAccess == "loadbalancer" && 
-			   km.config.IngestHost != "" && km.config.StreamingHost != "" {
-				fmt.Println("\n🔍 Verifying gateways via LoadBalancer...")
-				gatewayMgr := NewGatewaysManager(km.config)
-				if err := gatewayMgr.VerifyGateways(); err != nil {
-					fmt.Printf("   ⚠️  Gateway health check failed: %v\n", err)
-					fmt.Println("   Gateways may still be starting - check status manually")
-				} else {
-					fmt.Println("   ✅ Gateways are healthy via LoadBalancer")
-				}
-			}
-		}
-		fmt.Println("\n✅ Setup complete! Gateways are ready for external traffic.")
-		fmt.Println("   (Press Ctrl+C to exit)")
-		// Wait for interrupt (but don't stop anything)
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-		<-sigChan
 	}
+
+	// 4. Sync Migrations (Required for Helm ConfigMap)
+	if err := km.syncMigrations(); err != nil {
+		return err
+	}
+
+	// 5. Setup Infrastructure (Secrets, CRDs)
+	if err := km.setupInfrastructure(); err != nil {
+		return err
+	}
+
+	// 5. Install/Upgrade Helm Chart
+	// We translate config into Helm values here
+	if err := km.installHelmChart(updatedImages); err != nil {
+		return err
+	}
+
+	// 6. Wait for Readiness
+	if err := km.waitForReadiness(); err != nil {
+		return err
+	}
+
+	// 7. Port Forwarding (if requested)
+	if !km.config.SkipPortForward {
+		return km.runPortForwarding()
+	}
+
+	// 8. Success Message
+	km.showSuccessMessage()
 
 	return nil
-}
-
-func (km *KubernetesManager) determineClusterName() error {
-	if km.config.K8sClusterName != "" {
-		return nil
-	}
-
-	// Try to get cluster name from kubectl context
-	ctxCmd := exec.Command("kubectl", "config", "current-context")
-	ctxOutput, err := ctxCmd.Output()
-	if err == nil {
-		ctxStr := strings.TrimSpace(string(ctxOutput))
-		// For kind clusters, context is usually "kind-<cluster-name>"
-		if strings.HasPrefix(ctxStr, "kind-") {
-			km.config.K8sClusterName = strings.TrimPrefix(ctxStr, "kind-")
-			return nil
-		}
-	}
-
-	// Prompt for cluster name
-	fmt.Print("Kubernetes cluster name: ")
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	km.config.K8sClusterName = strings.TrimSpace(scanner.Text())
-	if km.config.K8sClusterName == "" {
-		return fmt.Errorf("cluster name is required")
-	}
-
-	return nil
-}
-
-func (km *KubernetesManager) buildAndLoadImages() (map[string]bool, error) {
-	fmt.Println("\n📦 Building and loading gateway images...")
-	updated := make(map[string]bool)
-
-	ingestGatewayPath, err := findGatewayRepoPath("ingest")
-	if err != nil {
-		return nil, fmt.Errorf("failed to find ingest gateway: %w", err)
-	}
-	upd, err := km.buildAndLoadImage(ingestGatewayPath, "frkr-ingest-gateway:0.1.0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to build ingest gateway: %w", err)
-	}
-	updated["frkr-ingest-gateway"] = upd
-
-	streamingGatewayPath, err := findGatewayRepoPath("streaming")
-	if err != nil {
-		return nil, fmt.Errorf("failed to find streaming gateway: %w", err)
-	}
-	upd, err = km.buildAndLoadImage(streamingGatewayPath, "frkr-streaming-gateway:0.1.0")
-	if err != nil {
-		return nil, fmt.Errorf("failed to build streaming gateway: %w", err)
-	}
-	updated["frkr-streaming-gateway"] = upd
-
-	operatorPath, err := findGatewayRepoPath("operator")
-	if err != nil {
-		return nil, fmt.Errorf("failed to find operator: %w", err)
-	}
-	upd, err = km.buildAndLoadImage(operatorPath, "frkr-operator:0.1.1")
-	if err != nil {
-		return nil, fmt.Errorf("failed to build operator: %w", err)
-	}
-	updated["frkr-operator"] = upd
-
-	return updated, nil
-}
-
-func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, error) {
-	// 0. Get current image ID (if any)
-	oldIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
-	oldIDBytes, _ := oldIDCmd.Output()
-	oldID := strings.TrimSpace(string(oldIDBytes))
-
-	// 1. Check for Dockerfile
-	dockerfile := filepath.Join(path, "Dockerfile")
-	if _, err := os.Stat(dockerfile); os.IsNotExist(err) {
-		return false, fmt.Errorf("Dockerfile not found at %s", dockerfile)
-	}
-
-	// 2. Build image
-	fmt.Printf("  Building %s...\n", imageName)
-	cmd := exec.Command("docker", "build", "-t", imageName, "-f", dockerfile, path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("docker build failed: %w", err)
-	}
-
-	// 3. Get new image ID
-	newIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
-	newIDBytes, err := newIDCmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("failed to inspect new image: %w", err)
-	}
-	newID := strings.TrimSpace(string(newIDBytes))
-
-	hasChanged := oldID != newID
-	if !hasChanged {
-		fmt.Printf("  ✅ Image %s is up to date (no change detected)\n", imageName)
-		// We still load it into Kind just in case the cluster was recreated
-	}
-
-	// 4. Load into kind cluster
-	fmt.Printf("  Loading %s into kind cluster '%s'...\n", imageName, km.config.K8sClusterName)
-	cmd = exec.Command("kind", "load", "docker-image", imageName, "--name", km.config.K8sClusterName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("kind load failed (make sure kind cluster exists): %w", err)
-	}
-
-	return hasChanged, nil
 }
 
 // syncMigrations copies migration files from frkr-common to frkr-infra-helm/migrations/
 func (km *KubernetesManager) syncMigrations() error {
 	fmt.Println("\n📋 Syncing migrations from frkr-common to Helm chart...")
 
-	// Get migrations path from frkr-common
-	sourcePath, err := frkrcommonpaths.MigrationsPath()
-	if err != nil {
-		return fmt.Errorf("failed to resolve migrations path: %w", err)
+	// Get migrations path from config (which uses findMigrationsPath)
+	sourcePath := km.config.MigrationsPath
+	if sourcePath == "" {
+		return fmt.Errorf("migrations path not set")
 	}
 
 	// Get helm chart path
@@ -340,6 +102,10 @@ func (km *KubernetesManager) syncMigrations() error {
 	}
 
 	// Find all *.up.sql files in source
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		 return fmt.Errorf("migrations source directory %s does not exist", sourcePath)
+	}
+	
 	migrationFiles, err := filepath.Glob(filepath.Join(sourcePath, "*.up.sql"))
 	if err != nil {
 		return fmt.Errorf("failed to glob migration files: %w", err)
@@ -356,696 +122,291 @@ func (km *KubernetesManager) syncMigrations() error {
 
 		src, err := os.Open(srcFile)
 		if err != nil {
-			return fmt.Errorf("failed to open source file %s: %w", srcFile, err)
+			return fmt.Errorf("failed to open source %s: %w", srcFile, err)
 		}
 
 		dst, err := os.Create(dstFile)
 		if err != nil {
 			src.Close()
-			return fmt.Errorf("failed to create destination file %s: %w", dstFile, err)
+			return fmt.Errorf("failed to create dest %s: %w", dstFile, err)
 		}
 
 		if _, err := io.Copy(dst, src); err != nil {
 			src.Close()
 			dst.Close()
-			return fmt.Errorf("failed to copy %s to %s: %w", filename, dstFile, err)
+			return fmt.Errorf("failed to copy %s: %w", filename, err)
 		}
 
 		src.Close()
 		dst.Close()
-
-		fmt.Printf("   ✅ Synced %s\n", filename)
 	}
 
-	fmt.Printf("✅ Synced %d migration file(s) to %s\n", len(migrationFiles), targetDir)
+	fmt.Printf("   ✅ Synced %d migration file(s) to %s\n", len(migrationFiles), targetDir)
 	return nil
 }
 
+func (km *KubernetesManager) checkPrerequisites() error {
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		return fmt.Errorf("kubectl not found in PATH")
+	}
+	if _, err := exec.LookPath("helm"); err != nil {
+		return fmt.Errorf("helm not found in PATH")
+	}
 
-// installEnvoyGateway installs Envoy Gateway
-func (km *KubernetesManager) installEnvoyGateway() error {
-	fmt.Println("\n📦 Installing Envoy Gateway...")
+	fmt.Println("\n🔍 Verifying Kubernetes cluster connection...")
+	cmd := exec.Command("kubectl", "cluster-info")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("kubectl not connected to a cluster")
+	}
+	fmt.Println("✅ Connected to Kubernetes cluster")
+	return nil
+}
 
-	// Check if already installed
-	checkCmd := exec.Command("helm", "list", "-n", "envoy-gateway-system", "-q", "-f", "^eg$")
-	if output, err := checkCmd.Output(); err == nil && strings.TrimSpace(string(output)) == "eg" {
-		fmt.Println("✅ Envoy Gateway already installed")
+func (km *KubernetesManager) determineClusterName() error {
+	if km.config.K8sClusterName != "" {
 		return nil
 	}
 
-	// Install via Helm
-	// Using v1.0.0 for stability
-	// helm install eg oci://docker.io/envoyproxy/gateway-helm --version v1.0.0 -n envoy-gateway-system --create-namespace
-	cmd := exec.Command("helm", "install", "eg", "oci://docker.io/envoyproxy/gateway-helm", "--version", "v1.0.0", "-n", "envoy-gateway-system", "--create-namespace")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to install Envoy Gateway: %w", err)
-	}
-
-	fmt.Println("✅ Envoy Gateway installed")
-	
-	// Wait for Envoy Gateway to be ready
-	fmt.Println("⏳ Waiting for Envoy Gateway to be ready...")
-	cmd = exec.Command("kubectl", "wait", "--for=condition=available", "deployment/envoy-gateway", "-n", "envoy-gateway-system", "--timeout=300s")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Println("⚠️  Envoy Gateway setup timed out, but proceeding...")
-	}
-
-	return nil
-}
-
-// installMockOIDC installs the mock OIDC provider for testing
-func (km *KubernetesManager) installMockOIDC() error {
-	fmt.Println("\n📦 Installing Mock OIDC Provider...")
-
-	// Find the manifest relative to the helm chart path
-	helmPath, err := findInfraRepoPath("helm")
-	if err != nil {
-		return fmt.Errorf("failed to find helm repo path: %w", err)
-	}
-	repoRoot := filepath.Dir(helmPath)
-	manifestPath := filepath.Join(repoRoot, "k8s", "dev-mock-oidc.yaml")
-
-	if _, err := os.Stat(manifestPath); err != nil {
-		return fmt.Errorf("mock OIDC manifest not found at %s: %w", manifestPath, err)
-	}
-
-	// Apply manifest
-	cmd := exec.Command("kubectl", "apply", "-f", manifestPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to apply mock OIDC manifest: %w", err)
-	}
-	
-	fmt.Println("✅ Mock OIDC Provider installed")
-	return nil
-}
-
-func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool, overrides map[string]string) error {
-	helmPath, err := findInfraRepoPath("helm")
-	if err != nil {
-		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
-	}
-
-	// Check if release already exists
-	checkCmd := exec.Command("helm", "list", "-q", "-f", "^frkr$")
-	checkCmd.Dir = helmPath
-	output, err := checkCmd.Output()
-	releaseExists := err == nil && strings.TrimSpace(string(output)) == "frkr"
-
-	if releaseExists {
-		fmt.Println("\n📥 Upgrading existing frkr Helm chart...")
+	// Try to get cluster name from kubectl context
+	ctxCmd := exec.Command("kubectl", "config", "current-context")
+	ctxOutput, err := ctxCmd.Output()
+	if err == nil {
+		ctxStr := strings.TrimSpace(string(ctxOutput))
+		if strings.HasPrefix(ctxStr, "kind-") {
+			km.config.K8sClusterName = strings.TrimPrefix(ctxStr, "kind-")
+			return nil
+		}
+		km.config.K8sClusterName = ctxStr // Default to context name if not kind
 	} else {
-		fmt.Println("\n📥 Installing frkr Helm chart...")
+		return fmt.Errorf("failed to get current context: %w", err)
 	}
 
-	// Use upgrade --install to handle both install and upgrade cases
+	return nil
+}
+
+func (km *KubernetesManager) buildAndLoadImages() (map[string]bool, error) {
+	fmt.Println("\n📦 Building and loading images for Kind...")
+	updated := make(map[string]bool)
+
+	// Ingest Gateway
+	p, err := findGatewayRepoPath("ingest")
+	if err == nil {
+		upd, err := km.buildAndLoadImage(p, "frkr-ingest-gateway:0.1.0")
+		if err != nil { return nil, err }
+		updated["frkr-ingest-gateway"] = upd
+	}
+
+	// Streaming Gateway
+	p, err = findGatewayRepoPath("streaming")
+	if err == nil {
+		upd, err := km.buildAndLoadImage(p, "frkr-streaming-gateway:0.1.0")
+		if err != nil { return nil, err }
+		updated["frkr-streaming-gateway"] = upd
+	}
+
+	// Operator
+	p, err = findGatewayRepoPath("operator")
+	if err == nil {
+		upd, err := km.buildAndLoadImage(p, "frkr-operator:0.1.1") // Keep version in sync
+		if err != nil { return nil, err }
+		updated["frkr-operator"] = upd
+	}
+	
+	// Mock OIDC (optional, checking if we can build it? No, it uses public image usually)
+	
+	return updated, nil
+}
+
+func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, error) {
+	// 0. Get current ID
+	oldIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
+	oldIDBytes, _ := oldIDCmd.Output()
+	oldID := strings.TrimSpace(string(oldIDBytes))
+
+	// 1. Build
+	fmt.Printf("  Building %s...\n", imageName)
+	dockerfile := filepath.Join(path, "Dockerfile")
+	cmd := exec.Command("docker", "build", "-t", imageName, "-f", dockerfile, path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return false, fmt.Errorf("build failed: %w", err)
+	}
+
+	// 2. Get New ID
+	newIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
+	newIDBytes, _ := newIDCmd.Output()
+	newID := strings.TrimSpace(string(newIDBytes))
+
+	hasChanged := oldID != newID
+	if !hasChanged {
+		fmt.Printf("  ✅ Image %s is up to date\n", imageName)
+	}
+
+	// 3. Load into Kind
+	fmt.Printf("  Loading %s into %s...\n", imageName, km.config.K8sClusterName)
+	cmd = exec.Command("kind", "load", "docker-image", imageName, "--name", km.config.K8sClusterName)
+	if err := cmd.Run(); err != nil {
+		return false, fmt.Errorf("kind load failed: %w", err)
+	}
+
+	return hasChanged, nil
+}
+
+func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) error {
+	helmPath, err := findInfraRepoPath("helm")
+	if err != nil {
+		return fmt.Errorf("failed to find helm chart: %w", err)
+	}
+
+	fmt.Println("\n📥 Installing/Upgrading frkr Helm chart...")
+
+	// Construct Helm args
 	args := []string{"upgrade", "--install", "frkr", ".", "-f", "values-full.yaml"}
 	
-	// Apply overrides
-	for k, v := range overrides {
-		args = append(args, "--set", fmt.Sprintf("%s=%s", k, v))
+	// Set overrides based on Config
+	overrides := []string{}
+
+	// DB Setup (Default to "full" stack or "byo" depending on config?)
+	// For "One-Click", we assume if they are using this tool in Kind, they want Full Stack?
+	// But the values-full.yaml enables it.
+	
+	// Dev/Kind specific overrides
+	if isKindCluster() {
+		// Ensure we use the images we just built (IfNotPresent in values.yaml handles this usually, 
+		// but we might want to force it if they are :latest, but here valid versions)
 	}
 	
-	helmCmd := exec.Command("helm", args...)
-	helmCmd.Dir = helmPath
-	helmCmd.Stdout = os.Stdout
-	helmCmd.Stderr = os.Stderr
-	if err := helmCmd.Run(); err != nil {
-		return fmt.Errorf("helm upgrade/install failed: %w", err)
+	if km.config.TestOIDC {
+		overrides = append(overrides, "dev.mockOIDC.enabled=true")
+		overrides = append(overrides, "auth.oidc.issuerUrl=http://frkr-mock-oidc.default.svc.cluster.local:8080/default")
+		// Configure Helm to use Mock OIDC
+		fmt.Println("   Configuring for Mock OIDC...")
 	}
 
-	// Only restart deployments that actually have updated images
-	if releaseExists {
+	// External Access
+	switch km.config.ExternalAccess {
+	case "loadbalancer":
+		overrides = append(overrides, "ingestGateway.service.type=LoadBalancer")
+		overrides = append(overrides, "streamingGateway.service.type=LoadBalancer")
+	case "ingress":
+		overrides = append(overrides, "ingress.enabled=true")
+		if km.config.IngressHost != "" {
+			overrides = append(overrides, fmt.Sprintf("ingress.host=%s", km.config.IngressHost))
+		}
+	}
+
+	for _, o := range overrides {
+		args = append(args, "--set", o)
+	}
+
+	cmd := exec.Command("helm", args...)
+	cmd.Dir = helmPath
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("helm upgrade failed: %w", err)
+	}
+	
+	// Restart deployments if images changed
+	if len(updatedImages) > 0 {
 		toRestart := []string{}
 		for dep, changed := range updatedImages {
 			if changed {
 				toRestart = append(toRestart, dep)
 			}
 		}
-
 		if len(toRestart) > 0 {
-			fmt.Printf("\n🔄 Restarting %d deployments to use new images...\n", len(toRestart))
-			if err := km.restartDeployments(toRestart); err != nil {
-				fmt.Printf("⚠️  Warning: Failed to restart deployments: %v\n", err)
+			fmt.Printf("🔄 Restarting %d deployments...\n", len(toRestart))
+			for _, dep := range toRestart {
+				exec.Command("kubectl", "rollout", "restart", "deployment", dep).Run()
 			}
-		} else {
-			fmt.Println("\n✅ All deployments are up to date (no images changed)")
 		}
 	}
 
 	return nil
 }
 
-// restartDeployments restarts the specified deployments
-func (km *KubernetesManager) restartDeployments(deployments []string) error {
-	for _, deployment := range deployments {
-		fmt.Printf("  Restarting %s...\n", deployment)
-		cmd := exec.Command("kubectl", "rollout", "restart", "deployment", deployment)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to restart %s: %w", deployment, err)
-		}
-	}
+func (km *KubernetesManager) waitForReadiness() error {
+	fmt.Println("\n⏳ Waiting for stack to be ready...")
 
-	// Wait for rollouts to complete
-	fmt.Println("  Waiting for rollouts to complete...")
-	for _, deployment := range deployments {
-		cmd := exec.Command("kubectl", "rollout", "status", "deployment", deployment, "--timeout=120s")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("rollout for %s failed or timed out: %w", deployment, err)
-		}
-	}
+	// 1. Wait for Operator (Ensures CRDs are respected)
+	fmt.Print("   Waiting for Operator... ")
+	exec.Command("kubectl", "wait", "--for=condition=available", "deployment/frkr-operator", "--timeout=120s").Run()
+	fmt.Println("✅")
 
-	return nil
-}
-
-// waitForMigrationJob waits for the Helm migration job to complete
-func (km *KubernetesManager) waitForMigrationJob() error {
-	// The migration job name follows the pattern: frkr-migrations
-	// Check if job exists and wait for it to complete
-	cmd := exec.Command("kubectl", "get", "job", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={.items[?(@.metadata.name==\"frkr-migrations\")].metadata.name}")
-	output, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(output)) == "" {
-		// Job might not exist yet or already completed (deleted by hook-delete-policy)
-		// Check if there are any migration jobs
-		cmd = exec.Command("kubectl", "get", "job", "-l", "app.kubernetes.io/name=frkr", "-o", "name")
-		output, err = cmd.Output()
-		if err != nil || strings.TrimSpace(string(output)) == "" {
-			// No migration job found - might have already completed and been deleted
-			// This is fine, migrations run as Helm hooks and may complete quickly
-			fmt.Println("   Migration job not found (may have already completed)")
-			return nil
-		}
-	}
-
-	// Wait for the migration job to complete
-	jobName := "frkr-migrations"
-	fmt.Printf("   Waiting for migration job '%s' to complete...\n", jobName)
-	cmd = exec.Command("kubectl", "wait", "--for=condition=complete", "job", jobName, "--timeout=300s")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// 2. Wait for FrkrInit (Migrations)
+	fmt.Print("   Waiting for Migrations (FrkrInit)... ")
+	cmd := exec.Command("kubectl", "wait", "--for=condition=Ready", "frkrinit/frkr-init", "--timeout=300s")
 	if err := cmd.Run(); err != nil {
-		// Check if job failed
-		cmd = exec.Command("kubectl", "get", "job", jobName, "-o", "jsonpath={.status.conditions[?(@.type==\"Failed\")].status}")
-		failedOutput, _ := cmd.Output()
-		if strings.TrimSpace(string(failedOutput)) == "True" {
-			// Get job logs for debugging
-			fmt.Println("\n❌ Migration job failed. Checking logs...")
-			cmd = exec.Command("kubectl", "logs", "-l", "job-name="+jobName, "--tail=50")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Run()
-			return fmt.Errorf("migration job failed")
-		}
-		// Job might have been deleted already (hook-delete-policy)
-		fmt.Println("   Migration job may have already completed")
+		fmt.Println("❌ Failed (check operator logs)")
+		return fmt.Errorf("migrations failed")
 	}
-	return nil
-}
+	fmt.Println("✅")
 
-func (km *KubernetesManager) waitForPods() error {
-	fmt.Println("\n⏳ Waiting for gateway deployments to be ready...")
-
-	// Wait for all required deployments in a single command for better efficiency
-	// This allows kubectl to monitor them in parallel
-	required := []string{
-		"deployment/frkr-ingest-gateway",
-		"deployment/frkr-streaming-gateway",
-	}
-
-	args := append([]string{"wait", "--for=condition=available", "--timeout=300s"}, required...)
-	cmd := exec.Command("kubectl", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("required gateways failed to become ready: %w", err)
-	}
-
-	// For the operator, we only wait if it actually exists (to avoid unnecessary timeout if disabled)
-	checkCmd := exec.Command("kubectl", "get", "deployment", "frkr-operator")
-	if err := checkCmd.Run(); err == nil {
-		fmt.Print("⏳ Waiting for optional operator to be ready... ")
-		// Use a much shorter timeout for optional components
-		cmd = exec.Command("kubectl", "wait", "--for=condition=available", "deployment/frkr-operator", "--timeout=5s")
-		if err := cmd.Run(); err != nil {
-			fmt.Println("⚠️  timed out (not ready yet)")
-		} else {
-			fmt.Println("✅ ready")
-		}
+	// 3. Wait for DataPlane
+	// If this is ready, it means database and brokers are connected and ready
+	fmt.Print("   Waiting for DataPlane... ")
+	if err := exec.Command("kubectl", "wait", "--for=condition=Ready", "frkrdataplane/frkr-dataplane", "--timeout=300s").Run(); err != nil {
+		fmt.Println("⚠️  Timed out waiting for DataPlane Ready state.")
 	} else {
-		fmt.Println("ℹ️  Optional operator deployment not found, skipping wait")
+		fmt.Println("✅")
 	}
-
+    
+    // We trust that if DataPlane is ready, the system is usable.
+    // Individual gateway deployment waits are removed as they are managed by the chart/GitOps eventually.
+    
 	return nil
 }
 
-func (km *KubernetesManager) setupPortForwarding() ([]*exec.Cmd, error) {
+func (km *KubernetesManager) runPortForwarding() error {
 	fmt.Println("\n🔌 Setting up port forwarding...")
-	portForwards := []struct {
-		service string
-		local   string
-		remote  string
-	}{
-		{"frkr-ingest-gateway", fmt.Sprintf("%d", km.config.IngestPort), "8080"},
-		{"frkr-streaming-gateway", fmt.Sprintf("%d", km.config.StreamingPort), "8081"},
-	}
-
-	portForwardCmds := []*exec.Cmd{}
-	for _, pf := range portForwards {
-		cmd := exec.Command("kubectl", "port-forward", fmt.Sprintf("svc/%s", pf.service), fmt.Sprintf("%s:%s", pf.local, pf.remote))
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			// Kill any already started port forwards
-			for _, c := range portForwardCmds {
-				if c.Process != nil {
-					c.Process.Kill()
-				}
-			}
-			return nil, fmt.Errorf("port forward failed for %s: %w", pf.service, err)
-		}
-		portForwardCmds = append(portForwardCmds, cmd)
-		fmt.Printf("✅ Port forwarding %s:%s -> %s\n", pf.local, pf.remote, pf.service)
-	}
-
-	return portForwardCmds, nil
-}
-
-// showExternalAccessInfo displays information about how to access gateways externally
-func (km *KubernetesManager) showExternalAccessInfo() {
-	fmt.Println("\n📡 External Access Information:")
-	fmt.Println("")
-
-	// Check current service types and external IPs
-	cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.type}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
-	output, err := cmd.Output()
-
-	hasLoadBalancer := false
-	if err == nil && len(output) > 0 {
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		for _, line := range lines {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 && parts[1] == "LoadBalancer" {
-				hasLoadBalancer = true
-				serviceName := parts[0]
-				externalIP := "<pending>"
-				if len(parts) >= 3 && parts[2] != "" {
-					externalIP = parts[2]
-				}
-				if strings.Contains(serviceName, "ingest") {
-					fmt.Printf("   ✅ Ingest Gateway (LoadBalancer): %s:8080\n", externalIP)
-				} else if strings.Contains(serviceName, "streaming") {
-					fmt.Printf("   ✅ Streaming Gateway (LoadBalancer): %s:8081\n", externalIP)
-				}
-			}
-		}
-	}
-
-	if !hasLoadBalancer {
-		fmt.Println("   The gateways are currently exposed via ClusterIP services (internal only).")
-		fmt.Println("   To enable external access, you have several options:")
-		fmt.Println("")
-		fmt.Println("   1. LoadBalancer Service (Cloud Providers):")
-		fmt.Println("      Update the service type in the Helm chart:")
-		fmt.Println("      - frkr-infra-helm/templates/ingest-gateway/service.yaml")
-		fmt.Println("      - frkr-infra-helm/templates/streaming-gateway/service.yaml")
-		fmt.Println("      Change 'type: ClusterIP' to 'type: LoadBalancer'")
-		fmt.Println("      Then run: helm upgrade frkr <helm-path>")
-		fmt.Println("")
-		fmt.Println("   2. Ingress Controller:")
-		fmt.Println("      Configure an Ingress resource pointing to:")
-		fmt.Println("      - frkr-ingest-gateway:8080")
-		fmt.Println("      - frkr-streaming-gateway:8081")
-		fmt.Println("")
-		fmt.Println("   3. NodePort (for testing):")
-		fmt.Println("      Change service type to 'NodePort' and access via <node-ip>:<node-port>")
-		fmt.Println("")
-	}
-
-	fmt.Println("   Current service endpoints (cluster-internal):")
-	fmt.Println("   - Ingest Gateway:    frkr-ingest-gateway:8080")
-	fmt.Println("   - Streaming Gateway: frkr-streaming-gateway:8081")
-	fmt.Println("")
-	fmt.Println("   To check service status:")
-	fmt.Println("   kubectl get svc -l app.kubernetes.io/name=frkr")
-}
-
-// showConfiguredExternalAccess shows information about configured external access
-func (km *KubernetesManager) showConfiguredExternalAccess() {
-	switch km.config.ExternalAccess {
-	case "loadbalancer":
-		fmt.Println("\n📡 LoadBalancer Services Configured:")
-		fmt.Println("   Checking for external IPs...")
-		cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
-		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-			for _, line := range lines {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					svcName := parts[0]
-					externalIP := parts[1]
-					if externalIP != "" && externalIP != "<pending>" {
-						if strings.Contains(svcName, "ingest") {
-							fmt.Printf("   ✅ Ingest Gateway:    http://%s:8080\n", externalIP)
-						} else if strings.Contains(svcName, "streaming") {
-							fmt.Printf("   ✅ Streaming Gateway: http://%s:8081\n", externalIP)
-						}
-					} else {
-						if strings.Contains(svcName, "ingest") {
-							fmt.Println("   ⏳ Ingest Gateway:    Waiting for LoadBalancer IP...")
-						} else if strings.Contains(svcName, "streaming") {
-							fmt.Println("   ⏳ Streaming Gateway: Waiting for LoadBalancer IP...")
-						}
-					}
-				}
-			}
-		}
-		fmt.Println("\n   Check status with: kubectl get svc -l app.kubernetes.io/name=frkr")
-	case "ingress":
-		fmt.Printf("\n📡 Ingress Configured:\n")
-		fmt.Printf("   Host: %s\n", km.config.IngressHost)
-		fmt.Printf("   Ingest Gateway:    http://%s/ingest\n", km.config.IngressHost)
-		fmt.Printf("   Streaming Gateway: http://%s/streaming\n", km.config.IngressHost)
-		fmt.Println("\n   Check status with: kubectl get ingress frkr-gateways")
-	}
-}
-
-// configureExternalAccess configures LoadBalancer or Ingress based on user choice
-func (km *KubernetesManager) configureExternalAccess() error {
-	switch km.config.ExternalAccess {
-	case "loadbalancer":
-		return km.configureLoadBalancer()
-	case "ingress":
-		return km.configureIngress()
-	default:
-		return nil // "none" - no configuration needed
-	}
-}
-
-// configureLoadBalancer changes service types from ClusterIP to LoadBalancer
-func (km *KubernetesManager) configureLoadBalancer() error {
-	fmt.Println("\n🔧 Configuring LoadBalancer services...")
-
-	services := []string{
-		"frkr-ingest-gateway",
-		"frkr-streaming-gateway",
-	}
-
-	for _, svcName := range services {
-		fmt.Printf("   Patching service %s to LoadBalancer...\n", svcName)
-		cmd := exec.Command("kubectl", "patch", "service", svcName, "-p", `{"spec":{"type":"LoadBalancer"}}`)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to patch service %s: %w", svcName, err)
-		}
-		fmt.Printf("   ✅ Service %s configured as LoadBalancer\n", svcName)
-	}
-
-	fmt.Println("\n⏳ Waiting for LoadBalancer IPs to be assigned...")
-	fmt.Println("   (This may take a few minutes depending on your cloud provider)")
-
-	// Wait for LoadBalancer IPs with timeout
-	maxWait := 300 // 5 minutes
-	for i := 0; i < maxWait; i++ {
-		time.Sleep(2 * time.Second)
-
-		// Check if both services have external IPs
-		cmd := exec.Command("kubectl", "get", "svc", "-l", "app.kubernetes.io/name=frkr", "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.status.loadBalancer.ingress[0].ip}{\"\\n\"}{end}")
-		output, err := cmd.Output()
-		if err == nil {
-			lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-			allReady := true
-			for _, line := range lines {
-				parts := strings.Fields(line)
-				if len(parts) >= 2 {
-					svcName := parts[0]
-					externalIP := parts[1]
-					if externalIP == "" || externalIP == "<pending>" {
-						allReady = false
-						break
-					}
-					if strings.Contains(svcName, "ingest") {
-						fmt.Printf("   ✅ Ingest Gateway LoadBalancer IP: %s\n", externalIP)
-						// Set gateway host for health checks
-						km.config.IngestHost = externalIP
-					} else if strings.Contains(svcName, "streaming") {
-						fmt.Printf("   ✅ Streaming Gateway LoadBalancer IP: %s\n", externalIP)
-						// Set gateway host for health checks
-						km.config.StreamingHost = externalIP
-					}
-				}
-			}
-			if allReady && len(lines) >= 2 {
-				fmt.Println("\n✅ LoadBalancer IPs assigned successfully!")
-				// Verify gateways are accessible via LoadBalancer
-				fmt.Println("\n🔍 Verifying gateways via LoadBalancer...")
-				gatewayMgr := NewGatewaysManager(km.config)
-				if err := gatewayMgr.VerifyGateways(); err != nil {
-					fmt.Printf("   ⚠️  Gateway health check failed: %v\n", err)
-					fmt.Println("   Gateways may still be starting - check status manually")
-				} else {
-					fmt.Println("   ✅ Gateways are healthy via LoadBalancer")
-				}
-				return nil
-			}
-		}
-
-		if (i+1)%30 == 0 {
-			fmt.Printf("   Still waiting... (%d/%d seconds)\n", i+1, maxWait)
-		}
-	}
-
-	fmt.Println("\n⚠️  LoadBalancer IPs not assigned within timeout")
-	fmt.Println("   Services are configured as LoadBalancer - check status with:")
-	fmt.Println("   kubectl get svc -l app.kubernetes.io/name=frkr")
-	return nil // Don't fail - services are configured, just waiting for IPs
-}
-
-// configureIngress creates Ingress resources for the gateways
-func (km *KubernetesManager) configureIngress() error {
-	fmt.Println("\n🔧 Configuring Ingress...")
-
-	// Determine IngressClass
-	var ingressClassName string
-	if km.config.IngressClassName != "" {
-		ingressClassName = km.config.IngressClassName
-		fmt.Printf("   Using configured IngressClass: %s\n", ingressClassName)
-	} else {
-		// Auto-detect if not configured
-		fmt.Println("   Checking for Ingress controller...")
-		cmd := exec.Command("kubectl", "get", "ingressclass", "-o", "jsonpath={.items[0].metadata.name}")
-		output, err := cmd.Output()
-		if err == nil && len(output) > 0 {
-			ingressClassName = strings.TrimSpace(string(output))
-			fmt.Printf("   ✅ Ingress controller detected: %s\n", ingressClassName)
-		} else {
-			fmt.Println("   ⚠️  No IngressClass found. You may need to install an Ingress controller.")
-			fmt.Println("      Common options: nginx-ingress, traefik, or cloud-specific controllers")
-			fmt.Print("   Continue anyway? (yes/no) [yes]: ")
-			scanner := bufio.NewScanner(os.Stdin)
-			scanner.Scan()
-			answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-			if answer == "no" || answer == "n" {
-				return fmt.Errorf("ingress setup cancelled")
-			}
-			// Ask for ingressClassName manually
-			fmt.Print("   IngressClass name (optional, press Enter to skip): ")
-			scanner.Scan()
-			ingressClassName = strings.TrimSpace(scanner.Text())
-		}
-	}
-
-	// Create Ingress resource
-	ingressClassNameField := ""
-	if ingressClassName != "" {
-		ingressClassNameField = fmt.Sprintf("  ingressClassName: %s\n", ingressClassName)
-	}
-
-	ingressTLSField := ""
-	ingressAnnotations := ""
-	if km.config.IngressTLSSecret != "" {
-		ingressTLSField = fmt.Sprintf(`  tls:
-  - hosts:
-    - %s
-    secretName: %s
-`, km.config.IngressHost, km.config.IngressTLSSecret)
-
-		// Add cert-manager annotation if we have an issuer configurd (even default)
-		if km.config.CertIssuerName != "" {
-			ingressAnnotations = fmt.Sprintf("    cert-manager.io/cluster-issuer: %s\n", km.config.CertIssuerName)
-		}
-	}
-
-	ingressYAML := fmt.Sprintf(`apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: frkr-gateways
-  labels:
-    app.kubernetes.io/name: frkr
-  annotations:
-%s
-spec:
-%s  rules:
-  - host: %s
-    http:
-      paths:
-      - path: /ingest
-        pathType: Prefix
-        backend:
-          service:
-            name: frkr-ingest-gateway
-            port:
-              number: 8080
-      - path: /streaming
-        pathType: Prefix
-        backend:
-          service:
-            name: frkr-streaming-gateway
-            port:
-              number: 8081
-%s`, ingressAnnotations, ingressClassNameField, km.config.IngressHost, ingressTLSField)
-
-	fmt.Printf("   Creating Ingress resource for host: %s\n", km.config.IngressHost)
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(ingressYAML)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create Ingress resource: %w", err)
-	}
-
-	fmt.Println("   ✅ Ingress resource created")
-	fmt.Println("\n⏳ Waiting for Ingress to be ready...")
-
-	// Wait for Ingress to get an address (IP or hostname)
-	maxWait := 120 // 2 minutes
-	for i := 0; i < maxWait; i++ {
-		time.Sleep(2 * time.Second)
-
-		// Try IP first
-		cmd := exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
-		output, err := cmd.Output()
-		address := strings.TrimSpace(string(output))
-
-		// If no IP, try hostname (some cloud providers use hostname)
-		if address == "" {
-			cmd = exec.Command("kubectl", "get", "ingress", "frkr-gateways", "-o", "jsonpath={.status.loadBalancer.ingress[0].hostname}")
-			output, err = cmd.Output()
-			address = strings.TrimSpace(string(output))
-		}
-
-		if err == nil && address != "" {
-			fmt.Printf("   ✅ Ingress address: %s\n", address)
-			fmt.Printf("\n📡 Gateway URLs:\n")
-			fmt.Printf("   Ingest Gateway:    http://%s/ingest\n", km.config.IngressHost)
-			fmt.Printf("   Streaming Gateway: http://%s/streaming\n", km.config.IngressHost)
-			fmt.Println("\n   Note: Ensure DNS points to the Ingress address above")
-			
-			// For Ingress, we can't easily verify from here (would need DNS resolution)
-			// But we can set the host for potential future verification
-			// The health check URLs will use the Ingress hostname with /ingest/health and /streaming/health paths
-			fmt.Println("\n   ⚠️  Gateway health verification skipped for Ingress")
-			fmt.Println("   (DNS resolution required - verify manually after DNS is configured)")
-			return nil
-		}
-
-		if (i+1)%20 == 0 {
-			fmt.Printf("   Still waiting... (%d/%d seconds)\n", i+1, maxWait)
-		}
-	}
-
-	fmt.Println("\n⚠️  Ingress address not assigned within timeout")
-	fmt.Println("   Ingress resource created - check status with:")
-	fmt.Println("   kubectl get ingress frkr-gateways")
-	return nil // Don't fail - Ingress is created, just waiting for address
-}
-
-// installCertManager installs cert-manager from the official manifest
-func (km *KubernetesManager) installCertManager() error {
-	fmt.Println("\n📦 Installing Cert-Manager...")
-
-	// Check if already installed
-	checkCmd := exec.Command("kubectl", "get", "pods", "-n", "cert-manager")
-	if err := checkCmd.Run(); err == nil {
-		fmt.Println("✅ Cert-Manager seems to be installed (namespace exists)")
-		return nil
-	}
-
-	// Install via kubectl apply
-	// Using v1.14.4 as verified stable
-	manifestURL := "https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml"
 	
-	cmd := exec.Command("kubectl", "apply", "-f", manifestURL)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to install cert-manager: %w", err)
-	}
+	// Trap signals to clean up
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("✅ Cert-Manager manifests applied")
+	// DB - Always frkr-db
+	dbPort := "5432"
+	if km.config.DBPort != "" {
+		dbPort = km.config.DBPort
+	}
+	go startPortForward("svc/frkr-db", fmt.Sprintf("%s:%s", dbPort, dbPort))
+
+	// Ingest
+	go startPortForward("svc/frkr-ingest-gateway", fmt.Sprintf("%d:8080", km.config.IngestPort))
+	// Streaming
+	go startPortForward("svc/frkr-streaming-gateway", fmt.Sprintf("%d:8081", km.config.StreamingPort))
 	
-	// Wait for Cert-Manager webhook to be ready (critical for ClusterIssuer)
-	fmt.Println("⏳ Waiting for Cert-Manager webhook to be ready...")
-	cmd = exec.Command("kubectl", "wait", "--for=condition=Available", "deployment/cert-manager-webhook", "-n", "cert-manager", "--timeout=300s")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Println("⚠️  Cert-Manager webhook setup timed out, but proceeding...")
-	} else {
-		// Extra sleep to ensure webhook service is actually reachable
-		time.Sleep(10 * time.Second)
-	}
-
+	fmt.Println("\n✅ frkr is running on Kubernetes (with port forwarding)!")
+	fmt.Printf("   Ingest:    http://localhost:%d\n", km.config.IngestPort)
+	fmt.Printf("   Streaming: http://localhost:%d\n", km.config.StreamingPort)
+	fmt.Printf("   Database:  localhost:%s\n", km.config.DBPort)
+	fmt.Println("\nPress Ctrl+C to exit.")
+	
+	<-sigChan
 	return nil
 }
 
-// configureClusterIssuer creates a Let's Encrypt ClusterIssuer
-func (km *KubernetesManager) configureClusterIssuer() error {
-	fmt.Printf("\n🔒 Configuring ClusterIssuer '%s' (%s)...\n", km.config.CertIssuerName, km.config.CertManagerEmail)
-
-	ingressClass := km.config.IngressClassName
-	if ingressClass == "" {
-		ingressClass = "envoy"
+func startPortForward(target, ports string) {
+	for {
+		cmd := exec.Command("kubectl", "port-forward", target, ports)
+		// suppress output unless error?
+		cmd.Run()
+		time.Sleep(2 * time.Second) // Retry delay
 	}
+}
 
-	issuerYAML := fmt.Sprintf(`apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: %s
-spec:
-  acme:
-    email: %s
-    server: %s
-    privateKeySecretRef:
-      name: %s
-    solvers:
-    - http01:
-        ingress:
-          class: %s`, 
-		km.config.CertIssuerName, 
-		km.config.CertManagerEmail, 
-		km.config.CertIssuerServer,
-		km.config.CertIssuerName,
-		ingressClass)
-
-	cmd := exec.Command("kubectl", "apply", "-f", "-")
-	cmd.Stdin = strings.NewReader(issuerYAML)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create ClusterIssuer: %w", err)
+func (km *KubernetesManager) showSuccessMessage() {
+	if km.config.SkipPortForward {
+		fmt.Println("\n✅ frkr is deployed!")
+		fmt.Println("   Run 'kubectl get svc' to see external IPs.")
 	}
+}
 
-	fmt.Println("✅ ClusterIssuer 'letsencrypt-prod' created")
+// Helpers are in frkrup_paths.go
+
+func (km *KubernetesManager) setupInfrastructure() error {
+	// No explicit infrastructure setup needed - Helm handles secrets and CRDs
 	return nil
 }

@@ -81,6 +81,16 @@ func findGatewayRepoPath(gatewayType string) (string, error) {
 		return "", fmt.Errorf("unknown component type: %s", gatewayType)
 	}
 
+	// Check for sibling directory first (Development Workflow)
+	siblingPath := filepath.Join(filepath.Dir(toolsRoot), repoName)
+	if _, err := os.Stat(siblingPath); err == nil {
+		// Verify it has go.mod to be sure it's the repo
+		if _, err := os.Stat(filepath.Join(siblingPath, "go.mod")); err == nil {
+			fmt.Printf("  Using local sibling repository for %s: %s\n", repoName, siblingPath)
+			return siblingPath, nil
+		}
+	}
+
 	submodulePath := filepath.Join(toolsRoot, repoName)
 	goModPath := filepath.Join(submodulePath, "go.mod")
 
@@ -153,6 +163,14 @@ func findInfraRepoPath(infraType string) (string, error) {
 		repoName = "frkr-infra-docker"
 	default:
 		return "", fmt.Errorf("unknown infra type: %s", infraType)
+	}
+
+	// Check for sibling directory first (Development Workflow)
+	siblingPath := filepath.Join(filepath.Dir(toolsRoot), repoName)
+	if _, err := os.Stat(siblingPath); err == nil {
+		// Actually just checking directory existence is usually enough for dev
+		fmt.Printf("  Using local sibling repository for %s: %s\n", repoName, siblingPath)
+		return siblingPath, nil
 	}
 
 	submodulePath := filepath.Join(toolsRoot, repoName)
