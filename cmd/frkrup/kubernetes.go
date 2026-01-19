@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -47,8 +46,9 @@ func (km *KubernetesManager) Setup() error {
 		}
 	}
 
-	// 4. Sync Migrations (Required for Helm ConfigMap)
-	if err := km.syncMigrations(); err != nil {
+
+	// 4. Install Gateway API CRDs (Required for Helm Chart)
+	if err := km.installGatewayAPI(); err != nil {
 		return err
 	}
 
@@ -79,71 +79,6 @@ func (km *KubernetesManager) Setup() error {
 	return nil
 }
 
-// syncMigrations copies migration files from frkr-common to frkr-infra-helm/migrations/
-func (km *KubernetesManager) syncMigrations() error {
-	fmt.Println("\n📋 Syncing migrations from frkr-common to Helm chart...")
-
-	// Get migrations path from config (which uses findMigrationsPath)
-	sourcePath := km.config.MigrationsPath
-	if sourcePath == "" {
-		return fmt.Errorf("migrations path not set")
-	}
-
-	// Get helm chart path
-	helmPath, err := findInfraRepoPath("helm")
-	if err != nil {
-		return fmt.Errorf("failed to find frkr-infra-helm: %w", err)
-	}
-
-	// Create migrations directory in helm chart
-	targetDir := filepath.Join(helmPath, "migrations")
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create migrations directory: %w", err)
-	}
-
-	// Find all *.up.sql files in source
-	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
-		 return fmt.Errorf("migrations source directory %s does not exist", sourcePath)
-	}
-	
-	migrationFiles, err := filepath.Glob(filepath.Join(sourcePath, "*.up.sql"))
-	if err != nil {
-		return fmt.Errorf("failed to glob migration files: %w", err)
-	}
-
-	if len(migrationFiles) == 0 {
-		return fmt.Errorf("no migration files found in %s", sourcePath)
-	}
-
-	// Copy each migration file
-	for _, srcFile := range migrationFiles {
-		filename := filepath.Base(srcFile)
-		dstFile := filepath.Join(targetDir, filename)
-
-		src, err := os.Open(srcFile)
-		if err != nil {
-			return fmt.Errorf("failed to open source %s: %w", srcFile, err)
-		}
-
-		dst, err := os.Create(dstFile)
-		if err != nil {
-			src.Close()
-			return fmt.Errorf("failed to create dest %s: %w", dstFile, err)
-		}
-
-		if _, err := io.Copy(dst, src); err != nil {
-			src.Close()
-			dst.Close()
-			return fmt.Errorf("failed to copy %s: %w", filename, err)
-		}
-
-		src.Close()
-		dst.Close()
-	}
-
-	fmt.Printf("   ✅ Synced %d migration file(s) to %s\n", len(migrationFiles), targetDir)
-	return nil
-}
 
 func (km *KubernetesManager) checkPrerequisites() error {
 	if _, err := exec.LookPath("kubectl"); err != nil {
@@ -271,6 +206,21 @@ func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) err
 	// For "One-Click", we assume if they are using this tool in Kind, they want Full Stack?
 	// But the values-full.yaml enables it.
 	
+	// Pass Configured Secrets and Details
+	overrides = append(overrides, fmt.Sprintf("infrastructure.db.user=%s", km.config.DBUser))
+	overrides = append(overrides, fmt.Sprintf("infrastructure.db.password=%s", km.config.DBPassword))
+	overrides = append(overrides, fmt.Sprintf("dataPlane.db.user=%s", km.config.DBUser))
+	overrides = append(overrides, fmt.Sprintf("dataPlane.db.password=%s", km.config.DBPassword))
+	
+	// Pass DB connection details
+	if km.config.DBName != "" {
+		overrides = append(overrides, fmt.Sprintf("dataPlane.db.database=%s", km.config.DBName))
+		overrides = append(overrides, fmt.Sprintf("infrastructure.db.name=%s", km.config.DBName))
+	}
+	if km.config.DBPort != "" {
+		overrides = append(overrides, fmt.Sprintf("dataPlane.db.port=%s", km.config.DBPort))
+	}
+
 	// Dev/Kind specific overrides
 	if isKindCluster() {
 		// Ensure we use the images we just built (IfNotPresent in values.yaml handles this usually, 
@@ -278,7 +228,7 @@ func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) err
 	}
 	
 	if km.config.TestOIDC {
-		overrides = append(overrides, "dev.mockOIDC.enabled=true")
+		overrides = append(overrides, "infrastructure.mockOIDC.enabled=true")
 		overrides = append(overrides, "auth.oidc.issuerUrl=http://frkr-mock-oidc.default.svc.cluster.local:8080/default")
 		// Configure Helm to use Mock OIDC
 		fmt.Println("   Configuring for Mock OIDC...")
@@ -402,6 +352,18 @@ func (km *KubernetesManager) showSuccessMessage() {
 		fmt.Println("\n✅ frkr is deployed!")
 		fmt.Println("   Run 'kubectl get svc' to see external IPs.")
 	}
+}
+
+func (km *KubernetesManager) installGatewayAPI() error {
+	fmt.Println("\n🌐 Installing Gateway API CRDs...")
+	// Standard install for v1.0.0
+	url := "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml"
+	cmd := exec.Command("kubectl", "apply", "-f", url)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to install Gateway API: %s: %w", string(output), err)
+	}
+	fmt.Println("✅ Gateway API installed")
+	return nil
 }
 
 // Helpers are in frkrup_paths.go

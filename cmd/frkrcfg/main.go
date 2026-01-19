@@ -30,6 +30,7 @@ func init() {
 	rootCmd.AddCommand(userCmd)
 	rootCmd.AddCommand(clientCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(tenantCmd)
 }
 
 func main() {

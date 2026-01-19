@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/frkr-io/frkr-common/migrate"
@@ -15,7 +14,12 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/cockroachdb"
 )
 
+func resetGlobals() {
+	dbURL = ""
+}
+
 func setupTestDBForCLI(t *testing.T) (*sql.DB, string) {
+	resetGlobals()
 	ctx := context.Background()
 
 	// Start CockroachDB container
@@ -35,20 +39,16 @@ func setupTestDBForCLI(t *testing.T) (*sql.DB, string) {
 	port, err := cockroachContainer.MappedPort(ctx, "26257")
 	require.NoError(t, err)
 
-	// Build connection string for migrations (postgres:// format - CockroachDB is PostgreSQL-compatible)
-	migrateURL := fmt.Sprintf("postgres://%s@%s:%s/%s?sslmode=disable",
+	// Build connection string for migrations (cockroachdb:// format to avoid advisory lock issues)
+	migrateURL := fmt.Sprintf("cockroachdb://%s@%s:%s/%s?sslmode=disable",
 		connConfig.User,
 		"localhost",
 		port.Port(),
 		connConfig.Database,
 	)
 
-	// Get absolute path to migrations directory
-	migrationsPath, err := filepath.Abs("../../../frkr-common/migrations")
-	require.NoError(t, err)
-
 	// Run migrations
-	err = migrate.RunMigrations(migrateURL, migrationsPath)
+	err = migrate.RunMigrations(migrateURL)
 	require.NoError(t, err)
 
 	// Build connection string for sql.Open (postgres:// format for lib/pq)
@@ -133,6 +133,11 @@ func TestStreamCreateCommand(t *testing.T) {
 	})
 
 	t.Run("create stream fails without db-url", func(t *testing.T) {
+		resetGlobals()
+		rootCmd.PersistentFlags().Set("db-url", "")
+		// Reset retention days to valid value so we hit the db-url check
+		streamCreateCmd.Flags().Set("retention-days", "7")
+		
 		rootCmd.SetArgs([]string{
 			"stream", "create", "test-stream",
 			"--tenant", "test-tenant",
@@ -156,6 +161,7 @@ func TestStreamListCommand(t *testing.T) {
 		"--db-url", dbURL,
 		"--tenant", "list-tenant",
 		"--description", "Stream for listing test",
+		"--retention-days", "7", // Explicit override
 	})
 	rootCmd.SetOut(os.Stderr) // Suppress output
 	err := rootCmd.Execute()
@@ -208,6 +214,7 @@ func TestStreamGetCommand(t *testing.T) {
 		"--db-url", dbURL,
 		"--tenant", "get-tenant",
 		"--description", "Stream for get test",
+		"--retention-days", "7", // Explicitly set to override any persisted broken value
 	})
 	rootCmd.SetOut(os.Stderr) // Suppress output
 	err := rootCmd.Execute()
@@ -252,14 +259,10 @@ func TestStreamGetCommand(t *testing.T) {
 func TestMigrateCommand(t *testing.T) {
 	_, dbURL := setupTestDBForCLI(t)
 
-	migrationsPath, err := filepath.Abs("../../../frkr-common/migrations")
-	require.NoError(t, err)
-
 	t.Run("migrate successfully", func(t *testing.T) {
 		rootCmd.SetArgs([]string{
 			"migrate",
 			"--db-url", dbURL,
-			"--migrations-path", migrationsPath,
 		})
 
 		var outBuf, errBuf bytes.Buffer
@@ -274,9 +277,11 @@ func TestMigrateCommand(t *testing.T) {
 	})
 
 	t.Run("migrate fails without db-url", func(t *testing.T) {
+		resetGlobals() // Ensure dbURL is empty
+		rootCmd.PersistentFlags().Set("db-url", "")
+		
 		rootCmd.SetArgs([]string{
 			"migrate",
-			"--migrations-path", migrationsPath,
 		})
 
 		var buf bytes.Buffer

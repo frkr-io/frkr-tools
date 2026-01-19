@@ -1,7 +1,0 @@
-k8s: true
-k8s_cluster_name: "frkr-dev"
-ingest_port: 8082
-streaming_port: 8081
-test_oidc: false
-external_access: "loadbalancer"
-migrations_path: "/home/jason/git/frkr-io/frkr-infra-helm/migrations"

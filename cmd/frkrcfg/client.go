@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/frkr-io/frkr-common/db"
 	"github.com/frkr-io/frkr-common/util"
-	"github.com/frkr-io/frkr-tools/pkg/db"
 	"github.com/spf13/cobra"
 )
 

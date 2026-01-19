@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,12 +13,8 @@ import (
 
 // setupTestDB is a convenience wrapper around the shared SetupTestDB from frkr-common
 func setupTestDB(t *testing.T) (*sql.DB, string) {
-	// Get absolute path to migrations directory relative to frkr-common root
-	migrationsPath, err := filepath.Abs("../../../frkr-common/migrations")
-	require.NoError(t, err)
-
 	// Use the shared test utility from frkr-common
-	return commonDB.SetupTestDB(t, migrationsPath)
+	return commonDB.SetupTestDB(t)
 }
 
 func TestCreateOrGetTenant(t *testing.T) {

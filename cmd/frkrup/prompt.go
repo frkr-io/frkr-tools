@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
+
+	"golang.org/x/term"
 )
 
 // promptFrkrupConfig prompts the user for configuration values
@@ -96,9 +99,25 @@ func promptConfig() (*FrkrupConfig, error) {
 		}
 		config.MigrationsPath = migrationsPath
 
-		// Set default hosts for K8s (they will be port-forwarded)
+		// Set default hosts/ports for K8s (they will be port-forwarded)
 		config.DBHost = "localhost"
+		config.DBPort = "5432"
+		config.DBName = "frkr"
 		config.BrokerHost = "localhost"
+
+		fmt.Println("\n🔑 Database Credentials (will be set in Kubernetes Secrets):")
+		fmt.Print("   Database User [root]: ")
+		scanner.Scan()
+		config.DBUser = strings.TrimSpace(scanner.Text())
+		if config.DBUser == "" {
+			config.DBUser = "root"
+		}
+		
+		// Password with verification
+		config.DBPassword, err = promptPasswordWithConfirmation("   Database Password [Required]: ")
+		if err != nil {
+			return nil, err
+		}
 
 		return config, nil
 	}
@@ -217,13 +236,11 @@ func promptCustomInfrastructure(config *FrkrupConfig, scanner *bufio.Scanner) *F
 		config.DBUser = "root"
 	}
 
-	fmt.Print("Database password (optional) [password]: ")
-	scanner.Scan()
-	pass := strings.TrimSpace(scanner.Text())
-	if pass == "" {
-		config.DBPassword = "password"
-	} else {
+	// Database password
+	if pass := promptPassword("Database password (optional) [password]: "); pass != "" {
 		config.DBPassword = pass
+	} else {
+		config.DBPassword = "password"
 	}
 
 	// Database name is hard-coded to "frkr" to match gateways and other components
@@ -310,4 +327,38 @@ func generateDefaultConfig() (*FrkrupConfig, error) {
 	config.MigrationsPath = migrationsPath
 
 	return config, nil
+}
+
+// promptPassword prompts for a password with masking
+func promptPassword(label string) string {
+	fmt.Print(label)
+	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return ""
+	}
+	fmt.Println("") // Newline after input
+	return strings.TrimSpace(string(bytePassword))
+}
+
+// promptPasswordWithConfirmation prompts for a password with confirmation and retries
+func promptPasswordWithConfirmation(label string) (string, error) {
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		// First input
+		pass := promptPassword(label)
+		if pass == "" {
+			fmt.Println("Error: Password cannot be empty.")
+			continue
+		}
+
+		// Confirmation
+		confirm := promptPassword(strings.TrimSuffix(label, ": ") + " (Confirm): ")
+		
+		if pass == confirm {
+			return pass, nil
+		}
+		
+		fmt.Println("❌ Passwords do not match. Please try again.")
+	}
+	return "", fmt.Errorf("failed to verify password after %d attempts", maxRetries)
 }

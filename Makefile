@@ -18,6 +18,7 @@ build:
 	cd frkr-ingest-gateway && GOWORK=off go build -o bin/gateway ./cmd/gateway
 	cd frkr-streaming-gateway && GOWORK=off go build -o bin/gateway ./cmd/gateway
 	cd frkr-operator && GOWORK=off $(MAKE) build-operator
+	cd frkr-operator && GOWORK=off go build -o ../bin/frkrctl ./cmd/frkrctl
 	go build -o bin/frkrup ./cmd/frkrup
 	go build -o bin/frkrcfg ./cmd/frkrcfg
 

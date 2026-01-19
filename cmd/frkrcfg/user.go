@@ -61,12 +61,12 @@ var userCreateCmd = &cobra.Command{
 			return fmt.Errorf("failed to create user: %w", err)
 		}
 
-		fmt.Printf("✅ User created successfully!\n\n")
-		fmt.Printf("User ID:       %s\n", user.ID)
-		fmt.Printf("Username:      %s\n", username)
-		fmt.Printf("Password:      %s\n", password)
-		fmt.Printf("Tenant:        %s (%s)\n\n", tenant.Name, tenant.ID)
-		fmt.Printf("⚠️  Save this password - it won't be shown again!\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "✅ User created successfully!\n\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "User ID:       %s\n", user.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Username:      %s\n", username)
+		fmt.Fprintf(cmd.OutOrStdout(), "Password:      %s\n", password)
+		fmt.Fprintf(cmd.OutOrStdout(), "Tenant:        %s (%s)\n\n", tenant.Name, tenant.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "⚠️  Save this password - it won't be shown again!\n")
 
 		return nil
 	},

@@ -130,18 +130,22 @@ func applyDefaults(config *FrkrupConfig) {
 
 	if config.MigrationsPath == "" {
 		// Use the robust path finder that uses Go modules
-		if path, err := findMigrationsPath(); err == nil {
+		path, err := findMigrationsPath()
+		fmt.Printf("[DEBUG] findMigrationsPath returned: %q (err=%v)\n", path, err)
+		if err == nil {
 			config.MigrationsPath = path
 		} else {
-			// Fallback: try local candidates (for development when go.mod isn't set up yet)
+			// Fallback: try local candidates
 			candidates := []string{
 				"frkr-common/migrations",
 				"../frkr-common/migrations",
-				"frkr-infra-helm/migrations",
 			}
 			for _, candidate := range candidates {
-				if absPath, err := filepath.Abs(candidate); err == nil {
+				absPath, err := filepath.Abs(candidate)
+				fmt.Printf("[DEBUG] Checking candidate: %s (abs: %s, err: %v)\n", candidate, absPath, err)
+				if err == nil {
 					if _, err := os.Stat(absPath); err == nil {
+						fmt.Printf("[DEBUG] Found valid candidate: %s\n", absPath)
 						config.MigrationsPath = absPath
 						break
 					}

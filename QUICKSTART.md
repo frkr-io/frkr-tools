@@ -44,7 +44,7 @@ make build
    - Stream gateway logs with health check status
 
 **Default configuration (auto-detected):**
-- Database: `localhost:26257` (PostgreSQL-compatible, works with CockroachDB or Postgres)
+- Database: `localhost:5432` (PostgreSQL-compatible)
 - Broker: `localhost:19092` (Kafka-compatible, works with Redpanda or Kafka)
 - Ingest Gateway: `http://localhost:8082`
 - Streaming Gateway: `http://localhost:8081`
@@ -73,12 +73,12 @@ make build
 
 # 1. Create a Stream
 ./bin/frkrcfg stream create my-api \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+  --db-url="postgres://root@localhost:5432/frkr?sslmode=disable"
 
 # 2. Create a User (for CLI access)
 # Save the password! You'll need it shortly.
 ./bin/frkrcfg user create testuser \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --db-url="postgres://root@localhost:5432/frkr?sslmode=disable" \
   --password="testpass"
 ```
 
@@ -155,14 +155,14 @@ cd frkr-tools
 make build
 
 # Create a user (password will be auto-generated if not provided)
-# Default DB URL for Docker Compose: postgres://root@localhost:26257/frkrdb?sslmode=disable
+# Default DB URL for Docker Compose: postgres://root@localhost:5432/frkr?sslmode=disable
 ./bin/frkrcfg user create streamuser \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
+  --db-url="postgres://root@localhost:5432/frkr?sslmode=disable" \
   --password="your-secure-password"
 
 # Or let frkrcfg generate a secure password
 ./bin/frkrcfg user create streamuser \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+  --db-url="postgres://root@localhost:5432/frkr?sslmode=disable"
 ```
 
 **Note:** 

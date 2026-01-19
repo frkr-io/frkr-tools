@@ -16,6 +16,7 @@ var (
 )
 
 func main() {
+	fmt.Println("DEBUG: STARTING FRKRUP (Build Check)")
 	flag.Parse()
 
 	var config *FrkrupConfig
@@ -123,7 +124,7 @@ func setupLocal(config *FrkrupConfig) error {
 	// Run migrations
 	fmt.Println("\n🗄️  Running database migrations...")
 	dbMgr := NewDatabaseManager(dbURL)
-	if err := dbMgr.RunMigrations(config.MigrationsPath); err != nil {
+	if err := dbMgr.RunMigrations(); err != nil {
 		// Cleanup Docker if we started it
 		if config.StartedDocker {
 			cleanupMgr := NewCleanupManager(config)

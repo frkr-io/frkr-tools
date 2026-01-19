@@ -30,7 +30,7 @@ sleep 2
 # So we pipe "yes" to it when it asks to start Docker Compose
 echo "Starting frkrup with config (frkrup will start Docker Compose)..." | tee -a "$PROOF_FILE"
 cd "$SCRIPT_DIR"
-echo "yes" | timeout 90 ./bin/frkrup --config examples/config-docker-compose.yaml > /tmp/flow1-frkrup.log 2>&1 &
+echo "yes" | timeout 90 ../bin/frkrup --config ../examples/config-docker-compose.yaml > /tmp/flow1-frkrup.log 2>&1 &
 FRKRUP_PID=$!
 # Wait for frkrup to start Docker Compose and gateways
 sleep 50
@@ -45,14 +45,22 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && echo "$STREAMING_HEALTH" | grep 
     echo "Streaming health: $STREAMING_HEALTH" >> "$PROOF_FILE"
     
     echo "Starting example-api..." | tee -a "$PROOF_FILE"
-    cd /home/jason/git/frkr-io/frkr-example-api
+    # Assuming sibling directory structure
+    cd "$SCRIPT_DIR/../../frkr-example-api" || cd "$HOME/git/frkr-io/frkr-example-api"
     pkill -f "node server.js" 2>/dev/null || true
     npm start > /tmp/flow1-api.log 2>&1 &
     sleep 4
     
     echo "Starting frkr-cli..." | tee -a "$PROOF_FILE"
     pkill -f "frkr stream" 2>/dev/null || true
-    /home/jason/git/frkr-io/frkr-cli/bin/frkr stream my-api \
+    
+    # Use relative path or standard install location
+    CLI_BIN="$SCRIPT_DIR/../../frkr-cli/bin/frkr"
+    if [ ! -f "$CLI_BIN" ]; then
+        CLI_BIN="frkr" # Fallback to PATH
+    fi
+    
+    $CLI_BIN stream my-api \
         --gateway-url=http://localhost:8081 \
         --username=testuser \
         --password=testpass \

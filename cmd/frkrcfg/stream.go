@@ -56,15 +56,15 @@ var streamCreateCmd = &cobra.Command{
 		}
 
 		// Output stream information
-		fmt.Printf("✅ Stream created successfully!\n\n")
-		fmt.Printf("Stream ID:     %s\n", stream.ID)
-		fmt.Printf("Stream Name:   %s\n", stream.Name)
-		fmt.Printf("Tenant:        %s (%s)\n", tenant.Name, tenant.ID)
-		fmt.Printf("Topic:         %s\n", stream.Topic)
-		fmt.Printf("Retention:     %d days\n", stream.RetentionDays)
-		fmt.Printf("Status:        %s\n\n", stream.Status)
-		fmt.Printf("Use this stream ID in your SDK:\n")
-		fmt.Printf("  streamId: '%s'\n", stream.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "✅ Stream created successfully!\n\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "Stream ID:     %s\n", stream.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Stream Name:   %s\n", stream.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "Tenant:        %s (%s)\n", tenant.Name, tenant.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Topic:         %s\n", stream.Topic)
+		fmt.Fprintf(cmd.OutOrStdout(), "Retention:     %d days\n", stream.RetentionDays)
+		fmt.Fprintf(cmd.OutOrStdout(), "Status:        %s\n\n", stream.Status)
+		fmt.Fprintf(cmd.OutOrStdout(), "Use this stream ID in your SDK:\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "  streamId: '%s'\n", stream.Name)
 
 		return nil
 	},
@@ -94,15 +94,15 @@ var streamListCmd = &cobra.Command{
 		}
 
 		if len(streams) == 0 {
-			fmt.Printf("No streams found for tenant '%s'\n", tenantName)
+			fmt.Fprintf(cmd.OutOrStdout(), "No streams found for tenant '%s'\n", tenantName)
 			return nil
 		}
 
-		fmt.Printf("Streams for tenant '%s':\n\n", tenantName)
-		fmt.Printf("%-36s %-20s %-15s %-30s\n", "ID", "Name", "Status", "Topic")
-		fmt.Printf("%s\n", "------------------------------------------------------------------------------------------------")
+		fmt.Fprintf(cmd.OutOrStdout(), "Streams for tenant '%s':\n\n", tenantName)
+		fmt.Fprintf(cmd.OutOrStdout(), "%-36s %-20s %-15s %-30s\n", "ID", "Name", "Status", "Topic")
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", "------------------------------------------------------------------------------------------------")
 		for _, stream := range streams {
-			fmt.Printf("%-36s %-20s %-15s %-30s\n",
+			fmt.Fprintf(cmd.OutOrStdout(), "%-36s %-20s %-15s %-30s\n",
 				stream.ID,
 				stream.Name,
 				stream.Status,
@@ -143,15 +143,15 @@ var streamGetCmd = &cobra.Command{
 			return fmt.Errorf("failed to get stream: %w", err)
 		}
 
-		fmt.Printf("Stream Details:\n\n")
-		fmt.Printf("ID:            %s\n", stream.ID)
-		fmt.Printf("Name:          %s\n", stream.Name)
-		fmt.Printf("Description:   %s\n", stream.Description)
-		fmt.Printf("Status:        %s\n", stream.Status)
-		fmt.Printf("Retention:     %d days\n", stream.RetentionDays)
-		fmt.Printf("Topic:         %s\n", stream.Topic)
-		fmt.Printf("Tenant ID:     %s\n", stream.TenantID)
-		fmt.Printf("Created:       %s\n", stream.CreatedAt.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(cmd.OutOrStdout(), "Stream Details:\n\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "ID:            %s\n", stream.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Name:          %s\n", stream.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "Description:   %s\n", stream.Description)
+		fmt.Fprintf(cmd.OutOrStdout(), "Status:        %s\n", stream.Status)
+		fmt.Fprintf(cmd.OutOrStdout(), "Retention:     %d days\n", stream.RetentionDays)
+		fmt.Fprintf(cmd.OutOrStdout(), "Topic:         %s\n", stream.Topic)
+		fmt.Fprintf(cmd.OutOrStdout(), "Tenant ID:     %s\n", stream.TenantID)
+		fmt.Fprintf(cmd.OutOrStdout(), "Created:       %s\n", stream.CreatedAt.Format("2006-01-02 15:04:05"))
 
 		return nil
 	},
@@ -199,12 +199,12 @@ var streamDeleteCmd = &cobra.Command{
 			return fmt.Errorf("failed to delete stream: %w", err)
 		}
 
-		fmt.Printf("✅ Stream deleted successfully!\n\n")
-		fmt.Printf("Deleted stream:\n")
-		fmt.Printf("  Name: %s\n", stream.Name)
-		fmt.Printf("  ID:   %s\n", stream.ID)
-		fmt.Printf("  Topic: %s\n", stream.Topic)
-		fmt.Printf("\nNote: This is a soft delete. The stream data remains in the database.\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "✅ Stream deleted successfully!\n\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "Deleted stream:\n")
+		fmt.Fprintf(cmd.OutOrStdout(), "  Name: %s\n", stream.Name)
+		fmt.Fprintf(cmd.OutOrStdout(), "  ID:   %s\n", stream.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "  Topic: %s\n", stream.Topic)
+		fmt.Fprintf(cmd.OutOrStdout(), "\nNote: This is a soft delete. The stream data remains in the database.\n")
 
 		return nil
 	},

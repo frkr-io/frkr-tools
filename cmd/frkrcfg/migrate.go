@@ -16,21 +16,16 @@ var migrateCmd = &cobra.Command{
 			return fmt.Errorf("--db-url is required")
 		}
 
-		migrationsPath, _ := cmd.Flags().GetString("migrations-path")
-
-		if migrationsPath == "" {
-			migrationsPath = "./migrations"
-		}
-
-		if err := migrate.RunMigrations(dbURL, migrationsPath); err != nil {
+// RunMigrations runs database migrations
+		if err := migrate.RunMigrations(dbURL); err != nil {
 			return fmt.Errorf("failed to run migrations: %w", err)
 		}
 
-		fmt.Println("✅ Migrations completed successfully")
+		fmt.Fprintln(cmd.OutOrStdout(), "✅ Migrations completed successfully")
 		return nil
 	},
 }
 
 func init() {
-	migrateCmd.Flags().String("migrations-path", "./migrations", "Path to migrations directory")
+	// No flags needed anymore
 }

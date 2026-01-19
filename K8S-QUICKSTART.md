@@ -137,19 +137,25 @@ Since `frkr` is secure by default, you need to create a stream and a user to acc
 ```bash
 cd frkr-tools
 
-# Build the configuration tool if needed
+# Build the CLI tools if needed
 make build
 
-# 1. Create a Stream (via K8s port-forward)
-# frkrup maintains DB port-forward on :26257 for Kind clusters
-./bin/frkrcfg stream create my-api \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+# 0. Create a Tenant (Required)
+# Use frkrctl to create a tenant (managed via Kubernetes CRD)
+# The default tenant is named 'default'.
+./bin/frkrctl tenant create default
 
-# 2. Create a User (for CLI access)
-# frkrup maintains DB port-forward on :26257 for Kind clusters
-./bin/frkrcfg user create testuser \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --password="testpass"
+# Get the Tenant ID (it will be displayed by the previous command)
+# Set the Tenant ID variable (replace with your UUID)
+export TENANT_ID="<your-uuid-here>"
+
+# 1. Create a Stream (via Kubernetes Operator)
+# This creates a FrkrStream Custom Resource
+./bin/frkrctl stream create my-api --tenant-id $TENANT_ID
+
+# 2. Create a User (via Kubernetes Operator)
+# This creates a FrkrUser Custom Resource. The password will be displayed.
+./bin/frkrctl user create testuser --tenant-id $TENANT_ID
 ```
 
 ---
@@ -231,10 +237,10 @@ To create additional users for CLI access:
 ```bash
 cd frkr-tools
 
-# frkrup maintains DB port-forward on :26257 for Kind clusters
-./bin/frkrcfg user create another-user \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --password="secure-password"
+# Use the Tenant ID from Step 4
+export TENANT_ID="<your-uuid-here>"
+
+./bin/frkrctl user create another-user --tenant-id $TENANT_ID
 ```
 
 **Note:** Save the password! It won't be shown again.
@@ -256,22 +262,18 @@ For SDK clients that need to authenticate with client ID/secret, use `frkrcfg` w
 ```bash
 cd frkr-tools
 
-# Port forward to the database (if not using external access)
-kubectl port-forward svc/frkr-cockroachdb 26257:26257 &
-
 # Create a client credential (secret will be auto-generated if not provided)
-./bin/frkrcfg client create my-sdk-client \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
+./bin/frkrctl client create my-sdk-client --tenant-id <TENANT_ID>
 
 # Optionally scope the client to a specific stream
-./bin/frkrcfg client create my-stream-client \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --stream="my-api"
+./bin/frkrctl client create my-stream-client \
+  --tenant-id <TENANT_ID> \
+  --stream-id <STREAM_ID>
 
 # Or provide your own secret
-./bin/frkrcfg client create my-sdk-client \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --secret="your-client-secret-here"
+./bin/frkrctl client create my-byo-client \
+  --tenant-id <TENANT_ID> \
+  --secret "your-client-secret-here"
 ```
 
 **Note:**
@@ -281,13 +283,7 @@ kubectl port-forward svc/frkr-cockroachdb 26257:26257 &
 
 **List existing clients:**
 ```bash
-./bin/frkrcfg client list \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable"
-
-# List clients scoped to a specific stream
-./bin/frkrcfg client list \
-  --db-url="postgres://root@localhost:26257/frkrdb?sslmode=disable" \
-  --stream="my-api"
+./bin/frkrctl client list
 ```
 
 **Use the client credentials in your SDK:**

@@ -4,9 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,18 +26,7 @@ func NewDatabaseManager(dbURL string) *DatabaseManager {
 }
 
 // RunMigrations runs database migrations
-func (dm *DatabaseManager) RunMigrations(migrationsPath string) error {
-	// Resolve migrations path
-	absPath, err := filepath.Abs(migrationsPath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve migrations path: %w", err)
-	}
-
-	// Verify migrations directory exists
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return fmt.Errorf("migrations directory not found: %s", absPath)
-	}
-
+func (dm *DatabaseManager) RunMigrations() error {
 	// Test database connection
 	testDB, err := sql.Open("postgres", dm.dbURL)
 	if err != nil {
@@ -71,7 +58,7 @@ func (dm *DatabaseManager) RunMigrations(migrationsPath string) error {
 		migrateURL = strings.Replace(migrateURL, "postgres://", "cockroachdb://", 1)
 	}
 
-	if err := migrate.RunMigrations(migrateURL, absPath); err != nil {
+	if err := migrate.RunMigrations(migrateURL); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
@@ -139,7 +126,7 @@ func maskPassword(dbURL string) string {
 
 // RunMigrationsK8s runs migrations for Kubernetes setup
 // RunMigrationsK8s runs migrations for Kubernetes setup using a temporary port-forward
-func RunMigrationsK8s(migrationsPath string) error {
+func RunMigrationsK8s() error {
 	cmd := exec.Command("kubectl", "port-forward", "svc/frkr-cockroachdb", "26257:26257")
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to port forward database: %w", err)
@@ -150,7 +137,7 @@ func RunMigrationsK8s(migrationsPath string) error {
 
 	dbURL := "postgres://root@localhost:26257/frkrdb?sslmode=disable"
 	dm := NewDatabaseManager(dbURL)
-	return dm.RunMigrations(migrationsPath)
+	return dm.RunMigrations()
 }
 
 // CreateStream creates a stream in the database directly using the db library
