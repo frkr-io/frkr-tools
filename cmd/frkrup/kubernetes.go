@@ -246,6 +246,11 @@ func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) err
 		}
 	}
 
+	// Vendor Provider
+	if km.config.Provider != "" {
+		overrides = append(overrides, fmt.Sprintf("global.provider=%s", km.config.Provider))
+	}
+
 	for _, o := range overrides {
 		args = append(args, "--set", o)
 	}

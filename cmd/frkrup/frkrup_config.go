@@ -19,6 +19,9 @@ type FrkrupConfig struct {
 	IngressHost      string `yaml:"ingress_host"`
 	IngressTLSSecret string `yaml:"ingress_tls_secret"`
 
+	// Vendor binding
+	Provider string `yaml:"provider"`
+
 	// TLS/CertManager configuration
 	InstallCertManager bool   `yaml:"install_cert_manager"`
 	CertManagerEmail   string `yaml:"cert_manager_email"`
