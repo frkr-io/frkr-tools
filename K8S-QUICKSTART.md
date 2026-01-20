@@ -145,17 +145,23 @@ make build
 # The default tenant is named 'default'.
 ./bin/frkrctl tenant create default
 
-# Get the Tenant ID (it will be displayed by the previous command)
-# Set the Tenant ID variable (replace with your UUID)
-export TENANT_ID="<your-uuid-here>"
+# Get the Tenant ID (from the K8s CRD status)
+# Wait a few seconds for the tenant to be ready
+export TENANT_ID=$(./bin/frkrctl tenant get default)
+echo "Tenant ID: $TENANT_ID"
 
 # 1. Create a Stream (via Kubernetes Operator)
 # This creates a FrkrStream Custom Resource
 ./bin/frkrctl stream create my-api --tenant-id $TENANT_ID
 
 # 2. Create a User (via Kubernetes Operator)
-# This creates a FrkrUser Custom Resource. The password will be displayed.
+# This creates a FrkrUser Custom Resource.
 ./bin/frkrctl user create testuser --tenant-id $TENANT_ID
+
+# The auto-generated password will be displayed in the output.
+# SAVE IT! It will not be shown again.
+# Password: <generated-password>
+export PASSWORD=<generated-password>
 ```
 
 ---
@@ -218,9 +224,10 @@ cd frkr-cli
 make build
 
 ./bin/frkr stream my-api \
-  --gateway-url=http://localhost:8081 \
+  --gateway=localhost:8081 \
   --username=testuser \
-  --password=testpass \
+  --password=$PASSWORD \
+  --insecure \
   --forward-url=http://localhost:3001
 ```
 
@@ -249,9 +256,10 @@ export TENANT_ID="<your-uuid-here>"
 You can then use these credentials with the CLI:
 ```bash
 ./bin/frkr stream my-api \
-  --gateway-url=http://localhost:8081 \
+  --gateway=localhost:8081 \
   --username=streamuser \
   --password=your-secure-password \
+  --insecure \
   --forward-url=http://localhost:3001
 ```
 
