@@ -200,6 +200,7 @@ func (c *FrkrupConfig) BuildIngestGatewayURL() string {
 }
 
 // BuildStreamingGatewayURL constructs the URL for streaming gateway health checks
+// NOTE: The streaming gateway is gRPC-based and serves HTTP health/metrics on port+1000
 func (c *FrkrupConfig) BuildStreamingGatewayURL() string {
 	host := c.StreamingHost
 	if host == "" {
@@ -215,6 +216,9 @@ func (c *FrkrupConfig) BuildStreamingGatewayURL() string {
 	port := c.StreamingPort
 	if c.K8s && c.ExternalAccess == "loadbalancer" {
 		port = 8081 // K8s service port
+	} else if !c.K8s {
+		// Local mode: streaming gateway serves HTTP health on gRPC port + 1000
+		port = c.StreamingPort + 1000
 	}
 	return fmt.Sprintf("http://%s:%d/health", host, port)
 }

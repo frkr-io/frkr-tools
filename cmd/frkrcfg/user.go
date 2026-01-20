@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -59,6 +60,18 @@ var userCreateCmd = &cobra.Command{
 				return fmt.Errorf("users table does not exist - please run migrations first: %w", err)
 			}
 			return fmt.Errorf("failed to create user: %w", err)
+		}
+
+
+		if outputFormat == "json" {
+			out := map[string]string{
+				"id":          user.ID,
+				"username":    username,
+				"password":    password,
+				"tenant_id":   tenant.ID,
+				"tenant_name": tenant.Name,
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "✅ User created successfully!\n\n")

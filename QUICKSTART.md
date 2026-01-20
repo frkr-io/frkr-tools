@@ -132,9 +132,10 @@ cd frkr-cli
 make build
 
 ./bin/frkr stream my-api \
-  --gateway-url=http://localhost:8081 \
+  --gateway=localhost:8081 \
   --username=testuser \
   --password=testpass \
+  --insecure \
   --forward-url=http://localhost:3001
 ```
 
@@ -173,9 +174,10 @@ make build
 You can then use these credentials with the CLI:
 ```bash
 ./bin/frkr stream my-api \
-  --gateway-url=http://localhost:8081 \
+  --gateway=localhost:8081 \
   --username=streamuser \
   --password=your-secure-password \
+  --insecure \
   --forward-url=http://localhost:3001
 ```
 

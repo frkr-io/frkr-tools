@@ -3,12 +3,12 @@
 
 k8s: false
 
-# Database (CockroachDB via Docker Compose)
+# Database (Postgres via Docker Compose)
 db_host: localhost
-db_port: "26257"
+db_port: "5432"
 db_user: root
 db_password: password
-db_name: frkrdb
+db_name: frkr
 
 # Broker (Redpanda via Docker Compose)
 broker_host: localhost

@@ -19,12 +19,14 @@ var rootCmd = &cobra.Command{
 var (
 	dbURL      string
 	tenantName string
+	outputFormat string
 )
 
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&dbURL, "db-url", "", "Database connection URL (required)")
 	rootCmd.PersistentFlags().StringVar(&tenantName, "tenant", "default", "Tenant name (default: 'default')")
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "Output format (text, json)")
 
 	rootCmd.AddCommand(streamCmd)
 	rootCmd.AddCommand(userCmd)

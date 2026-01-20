@@ -42,11 +42,11 @@ echo "Waiting for frkrup to complete setup..." | tee -a "$PROOF_FILE"
 FRKRUP_SUCCESS=false
 for i in {1..60}; do
     # Check if port forwarding is active (most reliable indicator frkrup succeeded)
+    # Note: Only check ingest gateway HTTP health - streaming gateway is gRPC on 8081
     if lsof -i :8082 > /dev/null 2>&1 && lsof -i :8081 > /dev/null 2>&1; then
-        # Verify gateways respond
-        if curl -s --max-time 2 http://localhost:8082/health 2>&1 | grep -q "healthy" && \
-           curl -s --max-time 2 http://localhost:8081/health 2>&1 | grep -q "healthy"; then
-            echo "✅ frkrup setup complete (port forwarding active, gateways healthy)" | tee -a "$PROOF_FILE"
+        # Verify ingest gateway responds (streaming is gRPC, can't check with HTTP)
+        if curl -s --max-time 2 http://localhost:8082/health 2>&1 | grep -q "healthy"; then
+            echo "✅ frkrup setup complete (port forwarding active, ingest gateway healthy)" | tee -a "$PROOF_FILE"
             FRKRUP_SUCCESS=true
             break
         fi
@@ -80,18 +80,73 @@ fi
 echo "Verifying gateways are accessible..." | tee -a "$PROOF_FILE"
 sleep 2
 INGEST_HEALTH=$(curl -s --max-time 5 http://localhost:8082/health 2>&1)
-STREAMING_HEALTH=$(curl -s --max-time 5 http://localhost:8081/health 2>&1)
+
+# For K8s, streaming gateway HTTP health is on pod port 9081 (not exposed via service)
+# Set up temporary port-forward to pod's metrics port
+STREAMING_POD=$(kubectl get pods -l app.kubernetes.io/component=streaming-gateway -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+if [ -n "$STREAMING_POD" ]; then
+    kubectl port-forward pod/$STREAMING_POD 9091:9081 > /dev/null 2>&1 &
+    PF_PID=$!
+    sleep 2
+    STREAMING_HEALTH=$(curl -s --max-time 5 http://localhost:9091/health 2>&1)
+    kill $PF_PID 2>/dev/null || true
+else
+    STREAMING_HEALTH="pod not found"
+fi
     
-if echo "$INGEST_HEALTH" | grep -q "healthy" && echo "$STREAMING_HEALTH" | grep -q "healthy"; then
+if echo "$INGEST_HEALTH" | grep -q "healthy" && (echo "$STREAMING_HEALTH" | grep -q "healthy" || echo "$STREAMING_HEALTH" | grep -q "OK"); then
     echo "✅ Gateways healthy" | tee -a "$PROOF_FILE"
     echo "Ingest health: $INGEST_HEALTH" >> "$PROOF_FILE"
     echo "Streaming health: $STREAMING_HEALTH" >> "$PROOF_FILE"
+    
+    echo "Creating stream and user via frkrctl..." | tee -a "$PROOF_FILE"
+    # Create tenant first (frkrctl creates K8s CRD which triggers operator)
+    $SCRIPT_DIR/../bin/frkrctl tenant create default >> "$PROOF_FILE" 2>&1 || true
+    # Wait for tenant to be ready and get ID from CRD
+    for i in {1..30}; do
+        TENANT_JSON=$($SCRIPT_DIR/../bin/frkrctl tenant get default -o json 2>/dev/null)
+        TENANT_ID=$(echo "$TENANT_JSON" | jq -r .id 2>/dev/null)
+        if [ -n "$TENANT_ID" ] && [ "$TENANT_ID" != "null" ]; then
+            break
+        fi
+        sleep 2
+    done
+    echo "Tenant ID: $TENANT_ID" >> "$PROOF_FILE"
+    if [ -n "$TENANT_ID" ]; then
+        $SCRIPT_DIR/../bin/frkrctl stream create my-api --tenant-id "$TENANT_ID" >> "$PROOF_FILE" 2>&1 || true
+        
+        # Create user and capture password from output (JSON)
+        echo "Creating user..." | tee -a "$PROOF_FILE"
+        USER_JSON=$($SCRIPT_DIR/../bin/frkrctl user create testuser --tenant-id "$TENANT_ID" -o json 2>> "$PROOF_FILE")
+        USER_PASSWORD=$(echo "$USER_JSON" | jq -r .password 2>/dev/null)
+        
+        if [ -z "$USER_PASSWORD" ] || [ "$USER_PASSWORD" == "null" ]; then
+            echo "⚠️  Password not found in output, checking secret..." | tee -a "$PROOF_FILE"
+            for i in {1..30}; do
+                USER_PASSWORD=$(kubectl get secret frkr-user-testuser -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+                if [ -n "$USER_PASSWORD" ]; then
+                    break
+                fi
+                sleep 2
+            done
+        fi
+        
+        if [ -n "$USER_PASSWORD" ]; then
+            echo "Retrieved user password from secret" >> "$PROOF_FILE"
+        else
+            echo "Warning: Could not get user password" >> "$PROOF_FILE"
+        fi
+    else
+        echo "Warning: Could not get tenant ID after 60 seconds" >> "$PROOF_FILE"
+        # Try one more time with full output for debugging
+        kubectl get frkrtenant default -o yaml >> "$PROOF_FILE" 2>&1 || true
+    fi
     
     echo "Starting example-api..." | tee -a "$PROOF_FILE"
     # Assuming sibling directory structure
     cd "$SCRIPT_DIR/../../frkr-example-api" || cd "$HOME/git/frkr-io/frkr-example-api"
     pkill -f "node server.js" 2>/dev/null || true
-    npm start > /tmp/flow3-api.log 2>&1 &
+    FRKR_PASSWORD="$USER_PASSWORD" npm start > /tmp/flow3-api.log 2>&1 &
     sleep 4
     
     echo "Starting frkr-cli..." | tee -a "$PROOF_FILE"
@@ -102,9 +157,10 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && echo "$STREAMING_HEALTH" | grep 
         CLI_BIN="frkr" # Fallback to PATH
     fi
     $CLI_BIN stream my-api \
-        --gateway-url=http://localhost:8081 \
+        --gateway=localhost:8081 \
         --username=testuser \
-        --password=testpass \
+        --password="${USER_PASSWORD:-testpass}" \
+        --insecure \
         --forward-url=http://localhost:3001 \
         > /tmp/flow3-cli.log 2>&1 &
     sleep 4

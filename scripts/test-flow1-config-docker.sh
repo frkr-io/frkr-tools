@@ -22,7 +22,7 @@ cleanup
 
 # Stop any existing Docker Compose to ensure clean state
 echo "Ensuring clean state..." | tee -a "$PROOF_FILE"
-cd "$SCRIPT_DIR/frkr-infra-docker"
+cd "$SCRIPT_DIR/../frkr-infra-docker"
 docker compose down 2>/dev/null || true
 sleep 2
 
@@ -37,12 +37,17 @@ sleep 50
 
 echo "Checking gateway health..." | tee -a "$PROOF_FILE"
 INGEST_HEALTH=$(curl -s http://localhost:8082/health)
-STREAMING_HEALTH=$(curl -s http://localhost:8081/health)
+STREAMING_HEALTH=$(curl -s http://localhost:9081/health)
 
-if echo "$INGEST_HEALTH" | grep -q "healthy" && echo "$STREAMING_HEALTH" | grep -q "healthy"; then
+if echo "$INGEST_HEALTH" | grep -q "healthy" && (echo "$STREAMING_HEALTH" | grep -q "healthy" || echo "$STREAMING_HEALTH" | grep -q "OK"); then
     echo "✅ Gateways healthy" | tee -a "$PROOF_FILE"
     echo "Ingest health: $INGEST_HEALTH" >> "$PROOF_FILE"
     echo "Streaming health: $STREAMING_HEALTH" >> "$PROOF_FILE"
+    
+    echo "Creating stream and user..." | tee -a "$PROOF_FILE"
+    DB_URL="postgres://root:password@localhost:5432/frkr?sslmode=disable"
+    $SCRIPT_DIR/../bin/frkrcfg stream create my-api --db-url="$DB_URL" >> "$PROOF_FILE" 2>&1 || true
+    $SCRIPT_DIR/../bin/frkrcfg user create testuser --db-url="$DB_URL" --password="testpass" >> "$PROOF_FILE" 2>&1 || true
     
     echo "Starting example-api..." | tee -a "$PROOF_FILE"
     # Assuming sibling directory structure
@@ -61,9 +66,10 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && echo "$STREAMING_HEALTH" | grep 
     fi
     
     $CLI_BIN stream my-api \
-        --gateway-url=http://localhost:8081 \
+        --gateway=localhost:8081 \
         --username=testuser \
         --password=testpass \
+        --insecure \
         --forward-url=http://localhost:3001 \
         > /tmp/flow1-cli.log 2>&1 &
     sleep 4
