@@ -3,6 +3,7 @@
 # Each flow outputs proof to /tmp/flow{N}-proof.log
 
 set -e
+set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

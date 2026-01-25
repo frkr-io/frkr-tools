@@ -13,3 +13,6 @@
 [submodule "frkr-operator"]
 	path = frkr-operator
 	url = https://github.com/frkr-io/frkr-operator.git
+[submodule "frkr-infra-terraform"]
+	path = frkr-infra-terraform
+	url = https://github.com/frkr-io/frkr-infra-terraform.git

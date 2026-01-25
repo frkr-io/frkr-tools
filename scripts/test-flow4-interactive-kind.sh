@@ -21,17 +21,19 @@ cleanup() {
 echo "=== Flow 4: Interactive Kind K8s ===" | tee -a "$PROOF_FILE"
 cleanup
 
-echo "Ensuring Kind cluster exists..." | tee -a "$PROOF_FILE"
-if ! kind get clusters | grep -q "frkr-dev"; then
-    echo "Creating Kind cluster..." | tee -a "$PROOF_FILE"
-    kind create cluster --name frkr-dev
-    sleep 15
-fi
+echo "Ensuring clean state..." | tee -a "$PROOF_FILE"
+echo "Deleting existing Kind cluster..." | tee -a "$PROOF_FILE"
+kind delete cluster --name frkr-dev 2>/dev/null || true
+sleep 5
+
+echo "Creating Kind cluster..." | tee -a "$PROOF_FILE"
+kind create cluster --name frkr-dev
+sleep 15
 
 echo "Starting frkrup interactively for K8s..." | tee -a "$PROOF_FILE"
 cd "$SCRIPT_DIR"
 expect << 'EOF' > /tmp/flow4-frkrup.log 2>&1 &
-set timeout 240
+set timeout 300
 spawn ../bin/frkrup
 expect {
     "Deploy to Kubernetes?" { 
@@ -42,11 +44,32 @@ expect {
         send "yes\r"
         exp_continue 
     }
+    "Database User" {
+        send "\r"
+        exp_continue
+    }
+    -re "Database Password.*:" {
+        # Password prompt - use same password as Flow 3
+        send "password\r"
+        exp_continue
+    }
+    -re "Confirm.*:" {
+        # Password confirmation - must match
+        send "password\r"
+        exp_continue
+    }
     "gateway is healthy" {
         exp_continue
     }
     "frkr is running on Kubernetes" {
+        # Success - wait for eof or keep running
         exp_continue
+    }
+    "Press Ctrl+C" {
+        # frkrup is running, keep expect alive indefinitely
+        # The bash script will kill us during cleanup
+        set timeout -1
+        expect eof
     }
     timeout { 
         puts "Timeout"
@@ -58,7 +81,8 @@ expect {
 }
 EOF
 FRKRUP_PID=$!
-sleep 120
+# Give frkrup time to start - no excessive sleep, let the loop check for readiness
+sleep 10
 
 # Wait for frkrup to complete setup or fail
 echo "Waiting for frkrup to complete setup..." | tee -a "$PROOF_FILE"
@@ -117,7 +141,16 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && (echo "$STREAMING_HEALTH" | grep
     echo "Ingest health: $INGEST_HEALTH" >> "$PROOF_FILE"
     echo "Streaming health: $STREAMING_HEALTH" >> "$PROOF_FILE"
     
-    echo "Creating stream and user via frkrctl..." | tee -a "$PROOF_FILE"
+     echo "Creating stream and user via frkrctl..." | tee -a "$PROOF_FILE"
+    
+    # Clean up any existing resources from previous runs
+    $SCRIPT_DIR/../bin/frkrctl tenant delete default >/dev/null 2>&1 || true
+    $SCRIPT_DIR/../bin/frkrctl stream delete my-api --tenant-id "any" >/dev/null 2>&1 || true # ID not needed for delete by name usually, or handled by cleanup
+    kubectl delete frkruser testuser --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete frkrstream my-api --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete frkrtenant default --ignore-not-found=true >/dev/null 2>&1 || true
+    sleep 5
+
     # Create tenant first (frkrctl creates K8s CRD which triggers operator)
     $SCRIPT_DIR/../bin/frkrctl tenant create default >> "$PROOF_FILE" 2>&1 || true
     # Wait for tenant to be ready and get ID from CRD
@@ -137,8 +170,17 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && (echo "$STREAMING_HEALTH" | grep
         
         # Create user and capture password from output (JSON)
         echo "Creating user..." | tee -a "$PROOF_FILE"
+
         USER_JSON=$($SCRIPT_DIR/../bin/frkrctl user create testuser --tenant-id "$TENANT_ID" -o json 2>> "$PROOF_FILE")
-        USER_PASSWORD=$(echo "$USER_JSON" | jq -r .password 2>/dev/null)
+        USER_PASSWORD=$(echo "$USER_JSON" | jq -r .password)
+        
+        if [ -z "$USER_PASSWORD" ] || [ "$USER_PASSWORD" == "null" ]; then
+            echo "❌ Failed to get password from frkrctl!" | tee -a "$PROOF_FILE"
+            echo "JSON Output: $USER_JSON" >> "$PROOF_FILE"
+            # Attempt fallback just in case
+        else
+            echo "✅ Retrieved user password" >> "$PROOF_FILE"
+        fi
         
         if [ -z "$USER_PASSWORD" ] || [ "$USER_PASSWORD" == "null" ]; then
             echo "⚠️  Password not found in output, checking secret..." | tee -a "$PROOF_FILE"

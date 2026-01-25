@@ -118,24 +118,15 @@ if echo "$INGEST_HEALTH" | grep -q "healthy" && (echo "$STREAMING_HEALTH" | grep
         # Create user and capture password from output (JSON)
         echo "Creating user..." | tee -a "$PROOF_FILE"
         USER_JSON=$($SCRIPT_DIR/../bin/frkrctl user create testuser --tenant-id "$TENANT_ID" -o json 2>> "$PROOF_FILE")
-        USER_PASSWORD=$(echo "$USER_JSON" | jq -r .password 2>/dev/null)
+        USER_PASSWORD=$(echo "$USER_JSON" | jq -r .password)
         
         if [ -z "$USER_PASSWORD" ] || [ "$USER_PASSWORD" == "null" ]; then
-            echo "⚠️  Password not found in output, checking secret..." | tee -a "$PROOF_FILE"
-            for i in {1..30}; do
-                USER_PASSWORD=$(kubectl get secret frkr-user-testuser -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
-                if [ -n "$USER_PASSWORD" ]; then
-                    break
-                fi
-                sleep 2
-            done
+            echo "❌ Failed to get password from frkrctl!" | tee -a "$PROOF_FILE"
+            echo "JSON Output: $USER_JSON" >> "$PROOF_FILE"
+            exit 1
         fi
         
-        if [ -n "$USER_PASSWORD" ]; then
-            echo "Retrieved user password from secret" >> "$PROOF_FILE"
-        else
-            echo "Warning: Could not get user password" >> "$PROOF_FILE"
-        fi
+        echo "✅ Retrieved user password" >> "$PROOF_FILE"
     else
         echo "Warning: Could not get tenant ID after 60 seconds" >> "$PROOF_FILE"
         # Try one more time with full output for debugging

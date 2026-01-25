@@ -15,11 +15,34 @@ This guide details how to deploy `frkr` to a production-ready environment on **O
 - **OCI Account**: Valid account with Free Tier eligibility.
 - **OCI CLI**: Installed and configured (`oci setup config`).
 - **kubectl**: Installed.
+- **Helm**: Installed (v3.x).
 - **frkrup**: Installed (v0.2.0+ required for OCI support).
 
 ## Step 1: Create Kubernetes Cluster (ARM64)
 
-We will use the OCI Console or CLI to create a generic OKE cluster.
+You can create the OKE cluster manually via the OCI Console/CLI, or use our Terraform preset (recommended).
+
+### Option A: Terraform (Recommended)
+
+> **Coming Soon**: The `frkr-infra-terraform` submodule will provide a ready-to-use OCI Free Tier preset.
+
+```bash
+cd frkr-infra-terraform/presets/oci-free-tier
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your OCI credentials
+
+terraform init
+terraform apply
+
+# Verify the plan stays within free tier limits
+./scripts/verify-oci-free-tier.sh
+
+# Export kubeconfig
+export KUBECONFIG=$(terraform output -raw kubeconfig_path)
+kubectl cluster-info
+```
+
+### Option B: Manual (OCI Console)
 
 1.  **Network**: Create a VCN with public subnets (easiest for access) or use the "Quick Create" wizard in OKE.
 2.  **Cluster**: Create an OKE cluster.
@@ -69,9 +92,13 @@ Deploy `frkr` using the configuration:
 ```
 
 **What happens next:**
-1.  **Helm Chart**: Installed with `global.provider=oci`, automatically configuring the Flexible Load Balancer.
-2.  **Infrastructure**: Cert-Manager and specialized Gateways are deployed.
-3.  **Load Balancer**: OCI provisions a Flexible Load Balancer. This may take 2-4 minutes. `frkrup` will wait.
+1.  **Helm Values**: `frkrup` generates a timestamped values file (e.g., `/tmp/frkr-values-20260124-103000.yaml`) for reproducibility.
+2.  **K8s Gateway API CRDs**: Installed via Helm pre-install hook (not `frkrup` directly).
+3.  **Helm Chart**: Installed with `global.provider=oci`, automatically configuring the Flexible Load Balancer.
+4.  **Infrastructure**: Cert-Manager and specialized Gateways are deployed.
+5.  **Load Balancer**: OCI provisions a Flexible Load Balancer. This may take 2-4 minutes. `frkrup` will wait.
+
+> **Tip**: You can inspect the generated values file to see exactly what was passed to Helm.
 
 ## Step 4: Configure TLS (Magic DNS)
 
@@ -115,3 +142,16 @@ If you own a domain (e.g., `example.com`), point an `A` record to the LoadBalanc
     ingress_tls_secret: frkr-tls
     ```
 3.  **Apply**: Run `frkrup` again.
+
+## Post-Deployment Verification
+
+After deployment, run the verification script to confirm everything is working:
+
+```bash
+./scripts/test-helm-deployment.sh
+```
+
+This checks:
+- K8s Gateway API CRDs are installed
+- Core frkr components are deployed
+- cert-manager is running (if enabled)

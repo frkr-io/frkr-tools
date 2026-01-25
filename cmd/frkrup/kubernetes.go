@@ -47,8 +47,10 @@ func (km *KubernetesManager) Setup() error {
 	}
 
 
-	// 4. Install Gateway API CRDs (Required for Helm Chart)
-	if err := km.installGatewayAPI(); err != nil {
+	// 4. Install K8s Gateway API CRDs (must be done BEFORE Helm)
+	// Note: Helm hooks can't install CRDs that are referenced in the same chart
+	// because Helm validates all templates before running hooks
+	if err := km.installGatewayAPICRDs(); err != nil {
 		return err
 	}
 
@@ -57,7 +59,7 @@ func (km *KubernetesManager) Setup() error {
 		return err
 	}
 
-	// 5. Install/Upgrade Helm Chart
+	// 6. Install/Upgrade Helm Chart
 	// We translate config into Helm values here
 	if err := km.installHelmChart(updatedImages); err != nil {
 		return err
@@ -188,99 +190,7 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, er
 	return hasChanged, nil
 }
 
-func (km *KubernetesManager) installHelmChart(updatedImages map[string]bool) error {
-	helmPath, err := findInfraRepoPath("helm")
-	if err != nil {
-		return fmt.Errorf("failed to find helm chart: %w", err)
-	}
-
-	fmt.Println("\n📥 Installing/Upgrading frkr Helm chart...")
-
-	// Construct Helm args
-	args := []string{"upgrade", "--install", "frkr", ".", "-f", "values-full.yaml"}
-	
-	// Set overrides based on Config
-	overrides := []string{}
-
-	// DB Setup (Default to "full" stack or "byo" depending on config?)
-	// For "One-Click", we assume if they are using this tool in Kind, they want Full Stack?
-	// But the values-full.yaml enables it.
-	
-	// Pass Configured Secrets and Details
-	overrides = append(overrides, fmt.Sprintf("infrastructure.db.user=%s", km.config.DBUser))
-	overrides = append(overrides, fmt.Sprintf("infrastructure.db.password=%s", km.config.DBPassword))
-	overrides = append(overrides, fmt.Sprintf("dataPlane.db.user=%s", km.config.DBUser))
-	overrides = append(overrides, fmt.Sprintf("dataPlane.db.password=%s", km.config.DBPassword))
-	
-	// Pass DB connection details
-	if km.config.DBName != "" {
-		overrides = append(overrides, fmt.Sprintf("dataPlane.db.database=%s", km.config.DBName))
-		overrides = append(overrides, fmt.Sprintf("infrastructure.db.name=%s", km.config.DBName))
-	}
-	if km.config.DBPort != "" {
-		overrides = append(overrides, fmt.Sprintf("dataPlane.db.port=%s", km.config.DBPort))
-	}
-
-	// Dev/Kind specific overrides
-	if isKindCluster() {
-		// Ensure we use the images we just built (IfNotPresent in values.yaml handles this usually, 
-		// but we might want to force it if they are :latest, but here valid versions)
-	}
-	
-	if km.config.TestOIDC {
-		overrides = append(overrides, "infrastructure.mockOIDC.enabled=true")
-		overrides = append(overrides, "auth.oidc.issuerUrl=http://frkr-mock-oidc.default.svc.cluster.local:8080/default")
-		// Configure Helm to use Mock OIDC
-		fmt.Println("   Configuring for Mock OIDC...")
-	}
-
-	// External Access
-	switch km.config.ExternalAccess {
-	case "loadbalancer":
-		overrides = append(overrides, "ingestGateway.service.type=LoadBalancer")
-		overrides = append(overrides, "streamingGateway.service.type=LoadBalancer")
-	case "ingress":
-		overrides = append(overrides, "ingress.enabled=true")
-		if km.config.IngressHost != "" {
-			overrides = append(overrides, fmt.Sprintf("ingress.host=%s", km.config.IngressHost))
-		}
-	}
-
-	// Vendor Provider
-	if km.config.Provider != "" {
-		overrides = append(overrides, fmt.Sprintf("global.provider=%s", km.config.Provider))
-	}
-
-	for _, o := range overrides {
-		args = append(args, "--set", o)
-	}
-
-	cmd := exec.Command("helm", args...)
-	cmd.Dir = helmPath
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("helm upgrade failed: %w", err)
-	}
-	
-	// Restart deployments if images changed
-	if len(updatedImages) > 0 {
-		toRestart := []string{}
-		for dep, changed := range updatedImages {
-			if changed {
-				toRestart = append(toRestart, dep)
-			}
-		}
-		if len(toRestart) > 0 {
-			fmt.Printf("🔄 Restarting %d deployments...\n", len(toRestart))
-			for _, dep := range toRestart {
-				exec.Command("kubectl", "rollout", "restart", "deployment", dep).Run()
-			}
-		}
-	}
-
-	return nil
-}
+// installHelmChart and generateValuesFile are in helm.go
 
 func (km *KubernetesManager) waitForReadiness() error {
 	fmt.Println("\n⏳ Waiting for stack to be ready...")
@@ -359,15 +269,34 @@ func (km *KubernetesManager) showSuccessMessage() {
 	}
 }
 
-func (km *KubernetesManager) installGatewayAPI() error {
-	fmt.Println("\n🌐 Installing Gateway API CRDs...")
-	// Standard install for v1.0.0
-	url := "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml"
+// installGatewayAPICRDs installs K8s Gateway API CRDs before Helm chart
+// This must be done outside of Helm because Helm validates all templates
+// before running hooks, and the chart contains Gateway resources
+func (km *KubernetesManager) installGatewayAPICRDs() error {
+	fmt.Println("\n🌐 Installing K8s Gateway API CRDs...")
+	
+	// Use version from values.yaml defaults (v1.2.1)
+	url := "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml"
+	
 	cmd := exec.Command("kubectl", "apply", "-f", url)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to install Gateway API: %s: %w", string(output), err)
+		return fmt.Errorf("failed to install Gateway API CRDs: %s: %w", string(output), err)
 	}
-	fmt.Println("✅ Gateway API installed")
+	
+	// Wait for CRDs to be established
+	fmt.Print("   Waiting for CRDs to be established... ")
+	waitCmd := exec.Command("kubectl", "wait", "--for=condition=Established", 
+		"crd/gateways.gateway.networking.k8s.io",
+		"crd/httproutes.gateway.networking.k8s.io",
+		"--timeout=60s")
+	if err := waitCmd.Run(); err != nil {
+		fmt.Println("⚠️")
+		// Continue anyway, they might work
+	} else {
+		fmt.Println("✅")
+	}
+	
+	fmt.Println("✅ K8s Gateway API CRDs installed")
 	return nil
 }
 
