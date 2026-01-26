@@ -18,6 +18,7 @@ type FrkrupConfig struct {
 	ExternalAccess   string `yaml:"external_access"` // "none", "loadbalancer", "ingress"
 	IngressHost      string `yaml:"ingress_host"`
 	IngressTLSSecret string `yaml:"ingress_tls_secret"`
+	PortForwardAddress string `yaml:"port_forward_address"`
 
 	// Vendor binding
 	Provider string `yaml:"provider"`
@@ -122,6 +123,10 @@ func applyDefaults(config *FrkrupConfig) {
 
 	if config.StreamingPort == 0 {
 		config.StreamingPort = 8081
+	}
+
+	if config.PortForwardAddress == "" {
+		config.PortForwardAddress = "localhost"
 	}
 
 	if config.CertIssuerName == "" {

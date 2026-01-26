@@ -236,26 +236,27 @@ func (km *KubernetesManager) runPortForwarding() error {
 	if km.config.DBPort != "" {
 		dbPort = km.config.DBPort
 	}
-	go startPortForward("svc/frkr-db", fmt.Sprintf("%s:%s", dbPort, dbPort))
+	go startPortForward("svc/frkr-db", fmt.Sprintf("%s:%s", dbPort, dbPort), km.config.PortForwardAddress)
 
 	// Ingest
-	go startPortForward("svc/frkr-ingest-gateway", fmt.Sprintf("%d:8080", km.config.IngestPort))
+	go startPortForward("svc/frkr-ingest-gateway", fmt.Sprintf("%d:8080", km.config.IngestPort), km.config.PortForwardAddress)
 	// Streaming
-	go startPortForward("svc/frkr-streaming-gateway", fmt.Sprintf("%d:8081", km.config.StreamingPort))
+	go startPortForward("svc/frkr-streaming-gateway", fmt.Sprintf("%d:8081", km.config.StreamingPort), km.config.PortForwardAddress)
 	
 	fmt.Println("\n✅ frkr is running on Kubernetes (with port forwarding)!")
-	fmt.Printf("   Ingest:    http://localhost:%d\n", km.config.IngestPort)
-	fmt.Printf("   Streaming: http://localhost:%d\n", km.config.StreamingPort)
-	fmt.Printf("   Database:  localhost:%s\n", km.config.DBPort)
+	
+	fmt.Printf("   Ingest:    http://%s:%d\n", km.config.PortForwardAddress, km.config.IngestPort)
+	fmt.Printf("   Streaming: http://%s:%d\n", km.config.PortForwardAddress, km.config.StreamingPort)
+	fmt.Printf("   Database:  %s:%s\n", km.config.PortForwardAddress, km.config.DBPort)
 	fmt.Println("\nPress Ctrl+C to exit.")
 	
 	<-sigChan
 	return nil
 }
 
-func startPortForward(target, ports string) {
+func startPortForward(target, ports, address string) {
 	for {
-		cmd := exec.Command("kubectl", "port-forward", target, ports)
+		cmd := exec.Command("kubectl", "port-forward", "--address", address, target, ports)
 		// suppress output unless error?
 		cmd.Run()
 		time.Sleep(2 * time.Second) // Retry delay

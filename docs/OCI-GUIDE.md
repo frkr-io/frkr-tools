@@ -24,23 +24,42 @@ You can create the OKE cluster manually via the OCI Console/CLI, or use our Terr
 
 ### Option A: Terraform (Recommended)
 
-> **Coming Soon**: The `frkr-infra-terraform` submodule will provide a ready-to-use OCI Free Tier preset.
+The `frkr-infra-terraform` submodule provides a ready-to-use OCI Free Tier preset.
 
-```bash
-cd frkr-infra-terraform/presets/oci-free-tier
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your OCI credentials
+1.  **Generate SSH Keys**:
+    You'll need an SSH key pair to access the cluster nodes for debugging if needed.
+    ```bash
+    ssh-keygen -t ed25519 -f ~/.ssh/oci-frkr -C "frkr-oci-cluster"
+    ```
 
-terraform init
-terraform apply
+2.  **Initialize Infrastructure**:
+    ```bash
+    cd frkr-infra-terraform/presets/oci-free-tier
+    cp terraform.tfvars.example terraform.tfvars
+    
+    # Edit terraform.tfvars with your OCI credentials (Tenancy ID, User ID, etc.)
+    # and the path to your public key (~/.ssh/oci-frkr.pub)
+    
+    terraform init
+    terraform plan -out=tfplan
+    ```
 
-# Verify the plan stays within free tier limits
-./scripts/verify-oci-free-tier.sh
+3.  **Verify Free Tier Compliance**:
+    Run the verification script to ensure your plan fits within the Always Free limits.
+    ```bash
+    ../../scripts/verify-oci-free-tier.sh
+    ```
 
-# Export kubeconfig
-export KUBECONFIG=$(terraform output -raw kubeconfig_path)
-kubectl cluster-info
-```
+4.  **Apply**:
+    ```bash
+    terraform apply tfplan
+    ```
+
+5.  **Configure Access**:
+    ```bash
+    export KUBECONFIG=$(terraform output -raw kubeconfig_path)
+    kubectl cluster-info
+    ```
 
 ### Option B: Manual (OCI Console)
 
