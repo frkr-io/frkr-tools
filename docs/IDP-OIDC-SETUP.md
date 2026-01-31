@@ -73,6 +73,29 @@ auth:
 
 ---
 
+## Option 4: Microsoft Entra ID (Azure AD)
+
+### 1. Register an Application
+- Go to **Microsoft Entra ID** > **App registrations** > **New registration**.
+- Name: `frkr-cli` (or similar).
+- Supported account types: "Accounts in this organizational directory only" (Single Tenant).
+
+### 2. Configure Redirect URIs
+- **Platform**: Select **Mobile and desktop applications**.
+- **Redirect URIs**: Add `http://localhost:38911/callback` (Required for `frkr login`).
+- **Web Platform**: If utilizing the Gateways for web-based flows, add a **Web** platform with your app's callback URL.
+
+### 3. Certificates & Secrets
+- Go to **Certificates & secrets** > **New client secret**.
+- Copy the **Value** immediately (this is your `clientSecret`).
+
+### 4. Issuer URL
+- Go to **Overview** > **Endpoints**.
+- Copy the **OpenID Connect metadata document** URL, but remove the `/.well-known...` suffix.
+- It usually looks like: `https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0`.
+
+---
+
 ## SDK Integration (Client Credentials)
 
 For background services and SDK integrations (e.g., Node.js middleware), use the **Client Credentials** flow. This allows your service to authenticate with the Ingest Gateway without user interaction.
@@ -129,3 +152,45 @@ frkr login \
 
 > [!TIP]
 > Most OIDC providers support a discovery endpoint. You can usually find the `auth-url` and `token-url` by visiting `<issuer-url>/.well-known/openid-configuration`.
+
+---
+
+## Production Deployment Configuration
+
+For production deployments (e.g., on OCI or DOKS), you should inject these OIDC settings into your Helm values or `frkrup` configuration.
+
+### frkrup Configuration (Recommended)
+
+If you are using `frkrup` to deploy, simply add these keys to your `frkrup.yaml` (or config file):
+
+```yaml
+oidc_issuer: "https://idp.example.com/"
+oidc_client_id: "YOUR_GATEWAY_CLIENT_ID"
+oidc_client_secret: "YOUR_SECRET" # Optional
+```
+
+`frkrup` will automatically generate the corresponding Helm values below.
+
+### Helm / Values.yaml (Manual)
+
+If you are using Helm directly, update your `values.yaml`:
+
+```yaml
+global:
+  auth:
+    type: "oidc"
+    oidc:
+      issuer: "https://idp.example.com/"
+      clientId: "YOUR_GATEWAY_CLIENT_ID"
+      clientSecret: "YOUR_SECRET"
+
+# Gateways Configuration (Verify Audience)
+frkr-ingest-gateway:
+  config: &gatewayConfig
+    auth:
+      enabled: true
+      audience: "YOUR_GATEWAY_CLIENT_ID"
+
+frkr-streaming-gateway:
+  config: *gatewayConfig
+```

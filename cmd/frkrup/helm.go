@@ -88,13 +88,47 @@ func (km *KubernetesManager) generateValuesFile(path string) error {
 		},
 	}
 
-	// Add auth config for mock OIDC
-	if km.config.TestOIDC {
-		values["auth"] = map[string]interface{}{
-			"oidc": map[string]interface{}{
-				"issuerUrl": "http://frkr-mock-oidc.default.svc.cluster.local:8080/default",
-			},
+	// Add auth config (Unified Logic)
+	authConfig := map[string]interface{}{
+		"type": "oidc",
+		"oidc": map[string]interface{}{},
+	}
+
+	if km.config.OidcIssuer != "" {
+		// Real OIDC Provider
+		authConfig["oidc"] = map[string]interface{}{
+			"issuer":   km.config.OidcIssuer,
+			"clientId": km.config.OidcClientId,
 		}
+		if km.config.OidcClientSecret != "" {
+			authConfig["oidc"].(map[string]interface{})["clientSecret"] = km.config.OidcClientSecret
+		}
+
+		// Configure Gateways to verify audience
+		if km.config.OidcClientId != "" {
+			gatewayConfig := map[string]interface{}{
+				"config": map[string]interface{}{
+					"auth": map[string]interface{}{
+						"audience": km.config.OidcClientId,
+					},
+				},
+			}
+			values["frkr-ingest-gateway"] = gatewayConfig
+			values["frkr-streaming-gateway"] = gatewayConfig
+		}
+	} else if km.config.TestOIDC {
+		// Mock OIDC Provider
+		authConfig["oidc"] = map[string]interface{}{
+			"issuer": MockOIDCIssuerURL,
+		}
+	}
+
+	// Apply global auth if either Mock or Real is configured
+	if km.config.OidcIssuer != "" || km.config.TestOIDC {
+		if _, ok := values["global"]; !ok {
+			values["global"] = map[string]interface{}{}
+		}
+		values["global"].(map[string]interface{})["auth"] = authConfig
 	}
 
 	// Add external access config

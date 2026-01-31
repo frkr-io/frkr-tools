@@ -8,6 +8,13 @@ This guide details how to deploy `frkr` to a production-ready environment on **O
 - **Load Balancer**: OCI Flexible Load Balancer (10Mbps min/max fits Always Free).
 - **TLS/DNS**: Automated via `cert-manager` and `sslip.io` (Magic DNS).
 
+### Terraform Implementation
+We use a **custom Terraform module** (`frkr-infra-terraform/modules/oci`) that:
+1.  Directly uses the official `oracle/oci` provider (v6.x+).
+2.  Provisions a VCN-Native OKE Cluster.
+3.  Creates a Node Pool properly sized for the Free Tier (4 OCPUs, 24GB RAM total) using `VM.Standard.A1.Flex` instances.
+4.  **Mitigates Capacity Issues**: It dynamically scans all Availability Domains to find one with A1 capacity.
+
 > **Note**: `frkr` images are multi-arch and support ARM64 out of the box.
 
 ## Prerequisites
@@ -131,6 +138,28 @@ Deploy `frkr` using the configuration:
 3.  **Helm Chart**: Installed with `global.provider=oci`, automatically configuring the Flexible Load Balancer.
 4.  **Infrastructure**: Cert-Manager and specialized Gateways are deployed.
 5.  **Load Balancer**: OCI provisions a Flexible Load Balancer. This may take 2-4 minutes. `frkrup` will wait.
+> [!WARNING]
+> This will permanently delete the Kubernetes cluster, all associated networking, and block storage.
+
+## Troubleshooting: Out of Host Capacity
+
+It is **very common** to encounter "Out of host capacity" errors when provisioning the `VM.Standard.A1.Flex` instances in popular regions (like San Jose or Phoenix). This means OCI has temporarily run out of Free Tier ARM chips in that specific data center.
+
+### Option 1: The Wait-and-Retry Loop (Recommended)
+Capacity fluctuates constantly as other users terminate instances. The most effective mitigation is to retry the provisioning repeatedly until you "snag" a slot.
+
+We provide a script for this:
+```bash
+# From frkr-infra-terraform/presets/oci-free-tier/
+./oci_retry_loop.sh
+```
+Leave this running in a terminal. It may take anywhere from 5 minutes to a few hours depending on the region's congestion.
+
+### Option 2: Switch Regions
+If you cannot wait, you can try a less popular region.
+1.  **Destroy** your current attempt (see "Clean Up" above).
+2.  Edit `terraform.tfvars` and change `region` (e.g., to `us-ashburn-1` or `us-chicago-1`).
+3.  Run `tofu init` and `tofu apply` again.
 
 > **Tip**: You can inspect the generated values file to see exactly what was passed to Helm.
 

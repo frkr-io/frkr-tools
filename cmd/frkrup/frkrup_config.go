@@ -9,6 +9,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MockOIDCIssuerURL is the internal K8s URL for the mock OIDC provider
+const MockOIDCIssuerURL = "http://frkr-mock-oidc.default.svc.cluster.local:8080/default"
+
 // FrkrupConfig holds the configuration for frkrup setup
 type FrkrupConfig struct {
 	// Deployment mode
@@ -51,6 +54,11 @@ type FrkrupConfig struct {
 
 	// Test configuration
 	TestOIDC bool `yaml:"test_oidc"`
+	
+	// Real OIDC Configuration
+	OidcIssuer       string `yaml:"oidc_issuer"`
+	OidcClientId     string `yaml:"oidc_client_id"`
+	OidcClientSecret string `yaml:"oidc_client_secret"`
 
 	// Paths
 	MigrationsPath string `yaml:"migrations_path"`
