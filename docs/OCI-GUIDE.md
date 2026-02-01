@@ -163,48 +163,17 @@ If you cannot wait, you can try a less popular region.
 
 > **Tip**: You can inspect the generated values file to see exactly what was passed to Helm.
 
-## Step 5: Configure TLS (Magic DNS)
+## Step 5: Configure TLS
 
 Once `frkrup` finishes, it will print the LoadBalancer IP (e.g., `123.45.67.89`).
 
-To enable TLS without buying a domain, we use `sslip.io`:
+To enable HTTPS, follow the **[TLS Setup Guide](TLS-SETUP.md)**.
 
-1.  **Update `frkr-oci.yaml`**:
-    ```yaml
-    external_access: ingress
-    ingress_host: 123-45-67-89.sslip.io   # Replace dashes with your IP
-    ingress_tls_secret: frkr-tls
-    
-    # Keep previous settings
-    provider: oci
-    install_cert_manager: true
-    cert_manager_email: "your-email@example.com"
-    ```
+It covers:
+*   **Magic DNS** (using `sslip.io` for zero-config HTTPS).
+*   **Custom Domains** (using your own domain name).
 
-2.  **Apply Update**:
-    ```bash
-    ./bin/frkrup --config frkr-oci.yaml
-    ```
-
-3.  **Verification**:
-    Wait for Let's Encrypt challenge to complete (approx. 1-2 mins).
-    
-    ```bash
-    curl https://123-45-67-89.sslip.io/health
-    ```
-    You should receive a valid TLS response! 🔒
-
-## Step 6: Alternative: Custom Domain with Cloudflare
-
-If you own a domain (e.g., `example.com`), point an `A` record to the LoadBalancer IP.
-
-1.  **DNS**: Create `A api.example.com` -> `123.45.67.89`.
-2.  **Update Config**:
-    ```yaml
-    ingress_host: api.example.com
-    ingress_tls_secret: frkr-tls
-    ```
-3.  **Apply**: Run `frkrup` again.
+Simply update your `frkr-oci.yaml` with the parameters from that guide and re-run `frkrup`.
 
 ## Troubleshooting
 

@@ -110,6 +110,13 @@ func validateConfig(config *FrkrupConfig) error {
 func applyDefaults(config *FrkrupConfig) {
 	// Note: DBHost and BrokerHost are REQUIRED - no defaults
 	// They must be explicitly set in config file or via prompts
+	if config.DBHost == "" && config.K8s {
+		config.DBHost = "frkr-db"
+	}
+	if config.BrokerHost == "" && config.K8s {
+		config.BrokerHost = "frkr-redpanda"
+	}
+
 	if config.DBPort == "" {
 		config.DBPort = "5432"
 	}

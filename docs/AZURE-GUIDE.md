@@ -40,6 +40,12 @@ cd frkr-infra-terraform/presets/azure-production
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
+```
+
+Edit `terraform.tfvars` to include your Subscription ID (found via `az account show`):
+
+```hcl
+subscription_id = "your-subscription-id"
 # edit location = "westus2" if desired
 ```
 
@@ -71,7 +77,14 @@ Create a `frkrup.yaml` to deploy the stack:
 ```yaml
 k8s: true
 k8s_cluster_name: "frkr-aks"
-external_access: "loadbalancer" # Uses Azure LB
+# Option A: Standard LoadBalancer (L4, HTTP only)
+external_access: "loadbalancer"
+
+# Option B: Managed Ingress with TLS (L7, HTTPS)
+# external_access: "ingress"
+# ingress_host: "frkr.example.com" # Or Use 1.2.3.4.sslip.io after getting IP
+# install_cert_manager: true
+# cert_manager_email: "you@example.com"
 
 # OIDC Configuration (Azure AD / Entra ID Example)
 # 1. Create App Registration in Entra ID (Azure AD)
@@ -85,7 +98,7 @@ oidc_client_secret: "YOUR_CLIENT_SECRET"
 Run the deployment:
 
 ```bash
-frkrup --config frkrup.yaml
+bin/frkrup --config frkrup.yaml
 ```
 
 ## Clean Up

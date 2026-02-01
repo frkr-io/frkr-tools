@@ -30,3 +30,6 @@ Thumbs.db
 # Build
 /bin/
 /dist/
+
+# Deployment YAML
+frkrup.yaml

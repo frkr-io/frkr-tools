@@ -79,6 +79,7 @@ auth:
 - Go to **Microsoft Entra ID** > **App registrations** > **New registration**.
 - Name: `frkr-cli` (or similar).
 - Supported account types: "Accounts in this organizational directory only" (Single Tenant).
+- **Client ID**: Once created, go to the **Overview** blade. Copy the **Application (client) ID** (e.g., `12345678-abcd-ef00-1234-567890abcdef`). This is your `oidc_client_id`.
 
 ### 2. Configure Redirect URIs
 - **Platform**: Select **Mobile and desktop applications**.
@@ -104,6 +105,13 @@ For background services and SDK integrations (e.g., Node.js middleware), use the
 - **Auth0**: Create an "M2M Application".
 - **Okta**: Create a "Service" (Machine-to-Machine) app.
 - **Google**: Create a "Service Account".
+- **Microsoft Entra ID (Azure)**:
+    - Use the App Registration created in Option 4.
+    - **Important**: For `client_credentials` flow, the scope MUST be `<YOUR_CLIENT_ID>/.default` (e.g., `api://<client-id>/.default` or just `<client-id>/.default`).
+    - You may need to "Grant Admin Consent" in the Azure Portal for the requested API permissions.
+
+> [!NOTE]
+> **DOKS/AKS Users**: Infrastructure providers like DigitalOcean or Azure Kubernetes Service do not act as the IdP for your *application* data. You still use the IdP chosen above (Auth0, Okta, Entra ID) for SDK authentication.
 
 ### 2. Configure Scopes
 - Ensure the app has the `ingest:write` scope if you use granular permissions.

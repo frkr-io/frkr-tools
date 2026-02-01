@@ -46,16 +46,10 @@ func (km *KubernetesManager) Setup() error {
 		}
 	}
 
-
 	// 4. Install K8s Gateway API CRDs (must be done BEFORE Helm)
 	// Note: Helm hooks can't install CRDs that are referenced in the same chart
 	// because Helm validates all templates before running hooks
 	if err := km.installGatewayAPICRDs(); err != nil {
-		return err
-	}
-
-	// 5. Setup Infrastructure (Secrets, CRDs)
-	if err := km.setupInfrastructure(); err != nil {
 		return err
 	}
 
@@ -81,7 +75,6 @@ func (km *KubernetesManager) Setup() error {
 	return nil
 }
 
-
 func (km *KubernetesManager) checkPrerequisites() error {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		return fmt.Errorf("kubectl not found in PATH")
@@ -100,24 +93,31 @@ func (km *KubernetesManager) checkPrerequisites() error {
 }
 
 func (km *KubernetesManager) determineClusterName() error {
+	// Get current context
+	ctxCmd := exec.Command("kubectl", "config", "current-context")
+	ctxOutput, err := ctxCmd.Output()
+	currentCtx := strings.TrimSpace(string(ctxOutput))
+	
+	if err != nil {
+		return fmt.Errorf("failed to get current kubernetes context: %w", err)
+	}
+
+	// 1. If config has a name, VALIDATE it
 	if km.config.K8sClusterName != "" {
+		if currentCtx != km.config.K8sClusterName {
+			return fmt.Errorf("context mismatch!\n   Active Context: %s\n   Configured Cluster: %s\n\n👉 Please switch your kubectl context:\n   kubectl config use-context %s", 
+				currentCtx, km.config.K8sClusterName, km.config.K8sClusterName)
+		}
 		return nil
 	}
 
-	// Try to get cluster name from kubectl context
-	ctxCmd := exec.Command("kubectl", "config", "current-context")
-	ctxOutput, err := ctxCmd.Output()
-	if err == nil {
-		ctxStr := strings.TrimSpace(string(ctxOutput))
-		if strings.HasPrefix(ctxStr, "kind-") {
-			km.config.K8sClusterName = strings.TrimPrefix(ctxStr, "kind-")
-			return nil
-		}
-		km.config.K8sClusterName = ctxStr // Default to context name if not kind
+	// 2. If config has NO name, use current context (Auto-discovery)
+	if strings.HasPrefix(currentCtx, "kind-") {
+		km.config.K8sClusterName = strings.TrimPrefix(currentCtx, "kind-")
 	} else {
-		return fmt.Errorf("failed to get current context: %w", err)
+		km.config.K8sClusterName = currentCtx
 	}
-
+	// Update config so other parts know the name
 	return nil
 }
 
@@ -298,12 +298,5 @@ func (km *KubernetesManager) installGatewayAPICRDs() error {
 	}
 	
 	fmt.Println("✅ K8s Gateway API CRDs installed")
-	return nil
-}
-
-// Helpers are in frkrup_paths.go
-
-func (km *KubernetesManager) setupInfrastructure() error {
-	// No explicit infrastructure setup needed - Helm handles secrets and CRDs
 	return nil
 }

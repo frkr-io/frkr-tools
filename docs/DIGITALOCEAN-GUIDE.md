@@ -69,40 +69,16 @@ We will use `frkrup` in **non-interactive mode** to automate the entire setup, i
 
 ## Step 3: DNS & TLS Configuration
 
-You have two options: **Standard Custom Domain** or **Magic DNS**.
+To enable HTTPS, follow the **[TLS Setup Guide](TLS-SETUP.md)**.
 
-### Option A: Magic DNS (Zero-Config)
+It explains how to use:
+*   **Magic DNS** (`sslip.io`) for instant SSL.
+*   **Custom Domains** for production.
 
-If you have no domain, use `sslip.io` with your new IP.
-
-1.  **Get IP**: From `frkrup` output (e.g., `157.245.1.1`).
-2.  **Update Config**:
-    Modify `frkr-prod.yaml` to secure the gateway using the magic domain:
-    ```yaml
-    external_access: ingress
-    ingress_host: 157-245-1-1.sslip.io
-    ingress_tls_secret: frkr-tls
-    # Keep infrastructure flags (idempotent)
-    install_cert_manager: true
-    cert_manager_email: "your-email@example.com"
-    ```
-3.  **Apply**:
-    ```bash
-    ./bin/frkrup --config frkr-prod.yaml
-    ```
-    *Result*: `https://157-245-1-1.sslip.io/health` is fully secure.
-
-### Option B: Custom Domain
-
-1.  **DNS**: Create an `A` record pointing `api.yourdomain.com` to the LoadBalancer IP.
-2.  **Update Config**:
-    ```yaml
-    external_access: ingress
-    ingress_host: api.yourdomain.com
-    ingress_tls_secret: frkr-tls
-    ...
-    ```
-3.  **Apply**: Run `frkrup` again.
+**Briefly**:
+1.  Get your LoadBalancer IP (`kubectl get svc`).
+2.  Update `frkrup.yaml` with `external_access: ingress` and `install_cert_manager: true`.
+3.  Run `frkrup` again.
 
 ## Step 5: Verification
 
