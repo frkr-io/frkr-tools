@@ -1,20 +1,20 @@
 # Production Deployment Guide: Azure (AKS)
 
-This guide details how to deploy `frkr` to **Azure Kubernetes Service (AKS)**. This preset is designed for **Robust Production** usage, utilizing dedicated CPU instances that fit within a monthly flexible credit (e.g., $150/mo).
+This guide details how to deploy `frkr` to **Azure Kubernetes Service (AKS)**. This preset is designed for **Production** usage, utilizing standard managed services while maintaining a reasonable cost profile.
 
 ## Architecture & Cost
 
 *   **Cluster**: Managed AKS (Standard Tier - Free).
 *   **Nodes**: 2x `Standard_B2s` (Burstable, 2 vCPU, 4 GB RAM).
-    *   *Note*: We use `B2s` because dedicated `D2` nodes ($130/node) would exceed your budget.
+    *   *Note*: uses `B2s` (Burstable) for cost efficiency. For sustained high-CPU workloads, consider upgrading to `Standard_D2as_v5` ($130/node).
     *   **Cost**: ~$36/mo each = **$72/mo**.
 *   **Storage (OS)**: Optimized 64GB OS Disks (~$5/mo/node) = **$10/mo**.
 *   **Storage (Data)**: ~64GB Persistent Volume for DB/Kafka = **~$5/mo** (Standard SSD).
 *   **Networking**: Standard Load Balancer + Public IP (~$5/mo).
 *   **Total Expected Cost: ~$95 / month**.
 
-> [!TIP]
-> **Safety First**: This setup leaves you a **$55/mo buffer** (35% of budget).
+> [!NOTE]
+> **Cost Efficiency**: This configuration is optimized for cost-effective production usage (~$95/mo).
 > *   **L7 Ingress (Envoy)**: Runs as high-availability pods on the nodes.
 > *   **Security**: The **Azure Standard Load Balancer** provides managed DDoS protection at the network layer (L4). Envoy handles L7 traffic/TLS.
 > *   **OIDC (Entra ID)**: Free (Free Tier supports OIDC apps).
@@ -40,7 +40,7 @@ cd frkr-infra-terraform/presets/azure-production
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# edit location = "eastus" if desired
+# edit location = "westus2" if desired
 ```
 
 ### 2. Provision Infrastructure
