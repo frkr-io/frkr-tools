@@ -44,6 +44,13 @@ func (km *KubernetesManager) Setup() error {
 		if err != nil {
 			return err
 		}
+	} else if km.config.ImageRegistry != "" && km.config.Rebuild {
+		// Cloud/Remote Cluster: Build and Push (Only if requested)
+		var err error
+		updatedImages, err = km.PushImages()
+		if err != nil {
+			return fmt.Errorf("failed to auto-push images: %w", err)
+		}
 	}
 
 	// 4. Install K8s Gateway API CRDs (must be done BEFORE Helm)
@@ -188,6 +195,59 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, er
 	}
 
 	return hasChanged, nil
+}
+
+// PushImages builds images and pushes them to the configured registry
+func (km *KubernetesManager) PushImages() (map[string]bool, error) {
+	registry := km.config.ImageRegistry
+	if registry == "" {
+		return nil, fmt.Errorf("property 'image_registry' is missing in config")
+	}
+
+	fmt.Printf("\n📦 Building and Pushing images to %s...\n", registry)
+	updated := make(map[string]bool)
+
+	images := []struct {
+		Name    string
+		Tag     string
+		RepoKey string // helper for findGatewayRepoPath
+	}{
+		{"frkr-ingest-gateway", "0.1.0", "ingest"},
+		{"frkr-streaming-gateway", "0.1.0", "streaming"},
+		{"frkr-operator", "0.1.1", "operator"},
+	}
+
+	for _, img := range images {
+		path, err := findGatewayRepoPath(img.RepoKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find repo for %s: %w", img.Name, err)
+		}
+
+		fullImage := fmt.Sprintf("%s/%s:%s", registry, img.Name, img.Tag)
+		fmt.Printf("  🚀 Processing %s...\n", fullImage)
+
+		// 1. Build
+		dockerfile := filepath.Join(path, "Dockerfile")
+		buildCmd := exec.Command("docker", "build", "-t", fullImage, "-f", dockerfile, path)
+		buildCmd.Stdout = os.Stdout
+		buildCmd.Stderr = os.Stderr
+		if err := buildCmd.Run(); err != nil {
+			return nil, fmt.Errorf("build failed for %s: %w", img.Name, err)
+		}
+
+		// 2. Push
+		pushCmd := exec.Command("docker", "push", fullImage)
+		pushCmd.Stdout = os.Stdout
+		pushCmd.Stderr = os.Stderr
+		if err := pushCmd.Run(); err != nil {
+			return nil, fmt.Errorf("push failed for %s: %w", img.Name, err)
+		}
+		fmt.Printf("  ✅ Pushed %s\n", fullImage)
+		updated[img.Name] = true
+	}
+
+	fmt.Println("\n✅ All images pushed successfully!")
+	return updated, nil
 }
 
 // installHelmChart and generateValuesFile are in helm.go

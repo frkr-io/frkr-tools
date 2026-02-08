@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -126,7 +127,21 @@ func (km *KubernetesManager) generateValuesFile(path string) error {
 	}
 
 	// Build values structure
+	registry := km.config.ImageRegistry
+	if registry != "" && !strings.HasSuffix(registry, "/") {
+		registry += "/"
+	}
+
+	valsGlobal := map[string]interface{}{
+		"imageRegistry": registry,
+	}
+	if km.config.Rebuild {
+		// If we just rebuilt/pushed, force pull to get the new bits
+		valsGlobal["imagePullPolicy"] = "Always"
+	}
+
 	values := map[string]interface{}{
+		"global": valsGlobal,
 		"platform": map[string]interface{}{
 			"k8sGatewayAPI": map[string]interface{}{
 				"install": false, // CRDs installed by frkrup before Helm runs

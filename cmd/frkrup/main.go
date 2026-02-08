@@ -13,9 +13,21 @@ import (
 
 var (
 	configFile     = flag.String("config", "", "Path to YAML config file")
+	rebuildFlag    = flag.Bool("rebuild", false, "Force rebuild and push of images")
+	targetFlag     = flag.String("target", "", "Deployment target ('local' or 'k8s')")
+	clusterFlag    = flag.String("cluster", "", "Kubernetes cluster name (overrides config)")
+	registryFlag   = flag.String("registry", "", "Image registry (overrides config)")
+	noPortForward  = flag.Bool("no-port-forward", false, "Disable port forwarding")
+	pushMode       = false
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "push" {
+		pushMode = true
+		// Remove subcommand from args so flag.Parse works
+		os.Args = append(os.Args[:1], os.Args[2:]...)
+	}
+
 	fmt.Println("DEBUG: STARTING FRKRUP (Build Check)")
 	flag.Parse()
 
@@ -39,6 +51,25 @@ func main() {
 		applyDefaults(config)
 	}
 
+	// Apply flags overrides
+	if *rebuildFlag {
+		config.Rebuild = true
+		fmt.Println("🔧 Force rebuild enabled (--rebuild set)")
+	}
+	if *targetFlag != "" {
+		config.Target = *targetFlag
+		config.K8s = (config.Target == "k8s")
+	}
+	if *clusterFlag != "" {
+		config.K8sClusterName = *clusterFlag
+	}
+	if *registryFlag != "" {
+		config.ImageRegistry = *registryFlag
+	}
+	if *noPortForward {
+		config.SkipPortForward = true
+	}
+
 	// Ensure cleanup on exit (for local mode)
 	if !config.K8s {
 		cleanupMgr := NewCleanupManager(config)
@@ -55,11 +86,24 @@ func main() {
 
 	if config.K8s {
 		k8sMgr := NewKubernetesManager(config)
+		
+		if pushMode {
+			if _, err := k8sMgr.PushImages(); err != nil {
+				fmt.Fprintf(os.Stderr, "❌ Push failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		if err := k8sMgr.Setup(); err != nil {
 			fmt.Fprintf(os.Stderr, "❌ Kubernetes setup failed: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
+		if pushMode {
+			fmt.Fprintln(os.Stderr, "Error: 'push' is only supported in Kubernetes mode")
+			os.Exit(1)
+		}
 		if err := setupLocal(config); err != nil {
 			// Cleanup explicitly before exit (defer won't run on os.Exit)
 			cleanupMgr := NewCleanupManager(config)

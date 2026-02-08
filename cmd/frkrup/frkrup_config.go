@@ -15,13 +15,16 @@ const MockOIDCIssuerURL = "http://frkr-mock-oidc.default.svc.cluster.local:8080/
 // FrkrupConfig holds the configuration for frkrup setup
 type FrkrupConfig struct {
 	// Deployment mode
-	K8s              bool   `yaml:"k8s"`
+	Target           string `yaml:"target"` // "local" or "k8s"
+	K8s              bool   `yaml:"k8s"`    // Deprecated: use target="k8s"
 	K8sClusterName   string `yaml:"k8s_cluster_name"`
 	SkipPortForward  bool   `yaml:"skip_port_forward"`
 	ExternalAccess   string `yaml:"external_access"` // "none", "loadbalancer", "ingress"
 	IngressHost      string `yaml:"ingress_host"`
 	IngressTLSSecret string `yaml:"ingress_tls_secret"`
 	PortForwardAddress string `yaml:"port_forward_address"`
+	ImageRegistry      string `yaml:"image_registry"`
+	Rebuild            bool   `yaml:"-"` // Flag to force build/push (CLI only)
 
 	// Vendor binding
 	Provider string `yaml:"provider"`
@@ -108,6 +111,30 @@ func validateConfig(config *FrkrupConfig) error {
 
 // applyDefaults sets default values for unset config fields
 func applyDefaults(config *FrkrupConfig) {
+	// 0. Normalize Target
+	if config.Target == "" {
+		if config.K8s {
+			config.Target = "k8s"
+		} else {
+			config.Target = "local"
+		}
+	}
+	// Sync K8s bool for internal logic
+	config.K8s = (config.Target == "k8s")
+
+	// 1. Smart Defaults for Remote Clusters
+	// If an Image Registry is configured, we assume this is a remote deployment (AKS/EKS/etc)
+	// and therefore we should NOT try to port-forward by default unless explicitly asked.
+	isRemote := config.ImageRegistry != ""
+	if isRemote && !config.SkipPortForward {
+		// User didn't explicit set skip_port_forward, so we default it to TRUE for remote
+		// (We need a way to differentiate "User set false" vs "Default false", but bool defaults to false.
+		// For now, if registry is set, we assume you want to skip PF. If you really want PF on remote, you can't easily express that
+		// without a tristate or explicit flag. But remote PF is rare/dangerous anyway.)
+		config.SkipPortForward = true
+		fmt.Println("remote deployment detected (registry set) -> disabling port forwarding")
+	}
+
 	// Note: DBHost and BrokerHost are REQUIRED - no defaults
 	// They must be explicitly set in config file or via prompts
 	if config.DBHost == "" && config.K8s {

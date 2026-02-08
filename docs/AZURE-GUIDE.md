@@ -11,10 +11,11 @@ This guide details how to deploy `frkr` to **Azure Kubernetes Service (AKS)**. T
 *   **Storage (OS)**: Optimized 64GB OS Disks (~$5/mo/node) = **$10/mo**.
 *   **Storage (Data)**: ~64GB Persistent Volume for DB/Kafka = **~$5/mo** (Standard SSD).
 *   **Networking**: Standard Load Balancer + Public IP (~$5/mo).
-*   **Total Expected Cost: ~$95 / month**.
+*   **Registry**: Azure Container Registry (Basic SKU) = **~$5/mo**.
+*   **Total Expected Cost: ~$100 / month**.
 
 > [!NOTE]
-> **Cost Efficiency**: This configuration is optimized for cost-effective production usage (~$95/mo).
+> **Cost Efficiency**: This configuration is optimized for cost-effective production usage (~$100/mo).
 > *   **L7 Ingress (Envoy)**: Runs as high-availability pods on the nodes.
 > *   **Security**: The **Azure Standard Load Balancer** provides managed DDoS protection at the network layer (L4). Envoy handles L7 traffic/TLS.
 > *   **OIDC (Entra ID)**: Free (Free Tier supports OIDC apps).
@@ -61,6 +62,9 @@ tofu apply tfplan
 
 Type `yes` to confirm. This will take ~5-10 minutes.
 
+**Important Outputs:**
+Note the `registry_login_server` and `registry_name` displayed at the end. You will need these.
+
 ### 3. Verify Access
 
 Once complete, a `kubeconfig` file is generated in the current directory.
@@ -68,6 +72,10 @@ Once complete, a `kubeconfig` file is generated in the current directory.
 ```bash
 export KUBECONFIG=$(pwd)/kubeconfig
 kubectl get nodes
+
+# Login to your new Container Registry
+# Replace 'frkrcrx...' with the registry_name from Terraform output
+az acr login --name frkrcrx...
 ```
 
 ### 4. Deploy `frkr`
@@ -77,6 +85,10 @@ Create a `frkrup.yaml` to deploy the stack:
 ```yaml
 k8s: true
 k8s_cluster_name: "frkr-aks"
+
+# Registry (Required for AKS) - From Terraform output
+image_registry: "frkrcrx....azurecr.io"
+
 # Option A: Standard LoadBalancer (L4, HTTP only)
 external_access: "loadbalancer"
 
@@ -98,8 +110,12 @@ oidc_client_secret: "YOUR_CLIENT_SECRET"
 Run the deployment:
 
 ```bash
+# frkrup will automatically Build & Push images to your ACR before deploying
 bin/frkrup --config frkrup.yaml
 ```
+
+(Optional) If you only want to push images without deploying:
+`bin/frkrup push --config frkrup.yaml`
 
 ## Clean Up
 
