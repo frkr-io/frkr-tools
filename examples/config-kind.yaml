@@ -2,9 +2,15 @@
 # Usage: ./bin/frkrup --config examples/config-kind.yaml
 
 k8s: true
-k8s_cluster_name: frkr-dev
 skip_port_forward: false
 external_access: none
+
+# Build images locally and load them into the cluster.
+# The image name is appended as an argument.
+# For Kind:     kind load docker-image --name <cluster>
+# For minikube: minikube image load
+# Omit to skip local image building entirely.
+image_load_command: "kind load docker-image --name frkr-dev"
 
 # These are used for port-forwarded access
 db_host: localhost

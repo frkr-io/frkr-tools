@@ -108,7 +108,7 @@ k8s_cluster_name: frkr-oci     # Optional, for logging
 
 # Production Settings
 skip_port_forward: true
-external_access: loadbalancer
+external_access: ingress
 
 # OCI Free Tier Configuration
 # Setting the provider tells the Helm chart to apply OCI-specific presets 
@@ -118,10 +118,8 @@ provider: oci
 # TLS Configuration (Automated)
 install_cert_manager: true
 cert_manager_email: "your-email@example.com"
-
-# Gateway Configuration (Standard Ports)
-ingest_port: 8080
-streaming_port: 8081
+# ingress_host: "frkr.example.com"  # Set after getting the external IP
+# ingress_tls_secret: frkr-tls
 ```
 
 ## Step 4: Run Deployment
@@ -134,10 +132,20 @@ Deploy `frkr` using the configuration:
 
 **What happens next:**
 1.  **Helm Values**: `frkrup` generates a timestamped values file (e.g., `/tmp/frkr-values-20260124-103000.yaml`) for reproducibility.
-2.  **K8s Gateway API CRDs**: Installed via Helm pre-install hook (not `frkrup` directly).
-3.  **Helm Chart**: Installed with `global.provider=oci`, automatically configuring the Flexible Load Balancer.
-4.  **Infrastructure**: Cert-Manager and specialized Gateways are deployed.
-5.  **Load Balancer**: OCI provisions a Flexible Load Balancer. This may take 2-4 minutes. `frkrup` will wait.
+2.  **Gateway API CRDs**: Installed via `kubectl apply` by `frkrup`.
+3.  **Envoy Gateway**: Installed as the ingress controller.
+4.  **cert-manager**: Installed as a standalone Helm release (if `install_cert_manager: true`).
+5.  **Helm Chart**: Installed with `global.provider=oci`, automatically configuring the Flexible Load Balancer.
+6.  **Load Balancer**: OCI provisions a Flexible Load Balancer via the Envoy Gateway. This may take 2-4 minutes.
+
+> For TLS/HTTPS, see the [TLS Setup Guide](TLS-SETUP.md).
+
+## Clean Up
+
+```bash
+tofu destroy
+```
+
 > [!WARNING]
 > This will permanently delete the Kubernetes cluster, all associated networking, and block storage.
 

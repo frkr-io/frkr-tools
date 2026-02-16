@@ -19,12 +19,15 @@ type FrkrupConfig struct {
 	K8s              bool   `yaml:"k8s"`    // Deprecated: use target="k8s"
 	K8sClusterName   string `yaml:"k8s_cluster_name"`
 	SkipPortForward  bool   `yaml:"skip_port_forward"`
-	ExternalAccess   string `yaml:"external_access"` // "none", "loadbalancer", "ingress"
-	IngressHost      string `yaml:"ingress_host"`
-	IngressTLSSecret string `yaml:"ingress_tls_secret"`
+	ExternalAccess       string `yaml:"external_access"` // "none" or "ingress"
+	IngressHost          string `yaml:"ingress_host"`
+	IngestIngressHost    string `yaml:"ingest_ingress_host"`
+	StreamingIngressHost string `yaml:"streaming_ingress_host"`
+	IngressTLSSecret     string `yaml:"ingress_tls_secret"`
 	PortForwardAddress string `yaml:"port_forward_address"`
 	ImageRegistry      string `yaml:"image_registry"`
-	Rebuild            bool   `yaml:"-"` // Flag to force build/push (CLI only)
+	ImageLoadCommand   string `yaml:"image_load_command"` // Shell command to load a local image into the cluster (e.g. "kind load docker-image --name my-cluster")
+	Rebuild            bool   `yaml:"-"`                  // Flag to force build/push (CLI only)
 
 	// Vendor binding
 	Provider string `yaml:"provider"`
@@ -95,7 +98,7 @@ func loadConfigFromFile(path string) (*FrkrupConfig, error) {
 	return config, nil
 }
 
-// validateFrkrupConfig validates that required configuration is present
+// validateConfig validates that required configuration is present
 func validateConfig(config *FrkrupConfig) error {
 	if !config.K8s {
 		// Local mode requires explicit host configuration
@@ -106,6 +109,21 @@ func validateConfig(config *FrkrupConfig) error {
 			return fmt.Errorf("broker_host is required in config file")
 		}
 	}
+
+	// Ingress host mutual exclusion:
+	// - ingress_host (shared/path routing) and per-service hosts (subdomain routing) cannot be mixed
+	// - per-service hosts must be specified as a pair
+	hasSharedHost := config.IngressHost != ""
+	hasIngestHost := config.IngestIngressHost != ""
+	hasStreamingHost := config.StreamingIngressHost != ""
+
+	if hasSharedHost && (hasIngestHost || hasStreamingHost) {
+		return fmt.Errorf("ingress_host and per-service hosts (ingest_ingress_host, streaming_ingress_host) are mutually exclusive")
+	}
+	if hasIngestHost != hasStreamingHost {
+		return fmt.Errorf("both ingest_ingress_host and streaming_ingress_host must be specified together")
+	}
+
 	return nil
 }
 
@@ -159,10 +177,6 @@ func applyDefaults(config *FrkrupConfig) {
 	if config.IngestPort == 0 {
 		config.IngestPort = 8082
 	}
-	if config.StreamingPort == 0 {
-		config.StreamingPort = 8081
-	}
-
 	if config.StreamingPort == 0 {
 		config.StreamingPort = 8081
 	}
@@ -224,50 +238,79 @@ func (c *FrkrupConfig) BuildBrokerURL() string {
 	return fmt.Sprintf("%s:%s", c.BrokerHost, c.BrokerPort)
 }
 
-// BuildIngestGatewayURL constructs the URL for ingest gateway health checks
-// The host is set by the orchestrator based on deployment scenario:
-// - Local: localhost
-// - K8s port-forward: localhost  
-// - K8s LoadBalancer: external IP (set when IP is assigned)
-// - K8s Ingress: ingress hostname with path prefix
+// ingressScheme returns "https" if TLS is configured, "http" otherwise.
+func (c *FrkrupConfig) ingressScheme() string {
+	if c.IngressTLSSecret != "" {
+		return "https"
+	}
+	return "http"
+}
+
+// effectiveIngestHost returns the hostname for the ingest gateway through the ingress.
+// Prefers the per-service host (subdomain routing) over the shared host (path routing).
+func (c *FrkrupConfig) effectiveIngestHost() string {
+	if c.IngestIngressHost != "" {
+		return c.IngestIngressHost
+	}
+	return c.IngressHost
+}
+
+// effectiveStreamingHost returns the hostname for the streaming gateway through the ingress.
+// Prefers the per-service host (subdomain routing) over the shared host (path routing).
+func (c *FrkrupConfig) effectiveStreamingHost() string {
+	if c.StreamingIngressHost != "" {
+		return c.StreamingIngressHost
+	}
+	return c.IngressHost
+}
+
+// BuildIngestGatewayURL constructs the URL for ingest gateway health checks.
+// Deployment scenarios:
+// - Local: http://localhost:<IngestPort>/health
+// - K8s port-forward: http://localhost:<IngestPort>/health
+// - K8s Ingress: http(s)://<hostname>/health (the /health HTTPRoute goes to ingest gateway)
 func (c *FrkrupConfig) BuildIngestGatewayURL() string {
+	// For Ingress mode, use the effective hostname with /health path.
+	// The Envoy Gateway has an explicit /health HTTPRoute pointing to the ingest gateway.
+	if c.K8s && c.ExternalAccess == "ingress" && c.effectiveIngestHost() != "" {
+		return fmt.Sprintf("%s://%s/health", c.ingressScheme(), c.effectiveIngestHost())
+	}
+
 	host := c.IngestHost
 	if host == "" {
 		host = "localhost"
 	}
-	
-	// For Ingress, use hostname with path prefix
-	if c.K8s && c.ExternalAccess == "ingress" && c.IngressHost != "" {
-		return fmt.Sprintf("http://%s/ingest/health", c.IngressHost)
-	}
-	
-	// Standard health endpoint
-	port := c.IngestPort
-	if c.K8s && c.ExternalAccess == "loadbalancer" {
-		port = 8080 // K8s service port
-	}
-	return fmt.Sprintf("http://%s:%d/health", host, port)
+	return fmt.Sprintf("http://%s:%d/health", host, c.IngestPort)
 }
 
-// BuildStreamingGatewayURL constructs the URL for streaming gateway health checks
-// NOTE: The streaming gateway is gRPC-based and serves HTTP health/metrics on port+1000
+// BuildStreamingGatewayURL constructs the URL for streaming gateway health checks.
+// NOTE: The streaming gateway is gRPC-based. Its HTTP health endpoint (/health) is on
+// port+1000 (a sidecar for local dev metrics). In K8s, health is checked by native gRPC
+// readiness probes on the pod.
+//
+// For Ingress mode, we return the ingest gateway's /health endpoint as a system-level
+// health proxy. The streaming gateway only serves gRPC, so an HTTP health check against
+// it would fail. The K8s gRPC readiness probes are the authoritative health signal for
+// the streaming gateway.
 func (c *FrkrupConfig) BuildStreamingGatewayURL() string {
+	// For Ingress mode, always use the ingest host's /health endpoint.
+	// The streaming gateway doesn't serve HTTP, so we check the ingest gateway
+	// as a proxy for "the ingress infrastructure is working."
+	if c.K8s && c.ExternalAccess == "ingress" {
+		host := c.effectiveIngestHost()
+		if host != "" {
+			return fmt.Sprintf("%s://%s/health", c.ingressScheme(), host)
+		}
+	}
+
 	host := c.StreamingHost
 	if host == "" {
 		host = "localhost"
 	}
-	
-	// For Ingress, use hostname with path prefix
-	if c.K8s && c.ExternalAccess == "ingress" && c.IngressHost != "" {
-		return fmt.Sprintf("http://%s/streaming/health", c.IngressHost)
-	}
-	
-	// Standard health endpoint
+
+	// Local mode: streaming gateway serves HTTP health on gRPC port + 1000
 	port := c.StreamingPort
-	if c.K8s && c.ExternalAccess == "loadbalancer" {
-		port = 8081 // K8s service port
-	} else if !c.K8s {
-		// Local mode: streaming gateway serves HTTP health on gRPC port + 1000
+	if !c.K8s {
 		port = c.StreamingPort + 1000
 	}
 	return fmt.Sprintf("http://%s:%d/health", host, port)

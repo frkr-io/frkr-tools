@@ -191,7 +191,7 @@ go test ./pkg/db/... -v -run TestCreateStream
 
 ### E2E Tests for Kubernetes
 
-End-to-end tests verify that `frkrup`'s Kubernetes external access configurations work correctly (LoadBalancer, Ingress, ClusterIP). These tests use kind clusters with MetalLB and nginx Ingress controller.
+End-to-end tests verify that `frkrup`'s Kubernetes deployment works correctly. These tests use Kind clusters with MetalLB and Envoy Gateway.
 
 **Prerequisites:** kind, kubectl, helm, Docker, and git submodules initialized
 
@@ -202,16 +202,16 @@ make test-e2e
 # Or run directly
 go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess
 
-# Run specific test
-go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess_LoadBalancer
+# Run a specific test
+go test -tags=e2e ./cmd/frkrup/... -v -run TestKubernetesExternalAccess_Ingress
 ```
 
 **What the tests verify:**
-- **LoadBalancer**: Services patched to LoadBalancer, MetalLB assigns IPs, gateways accessible via HTTP
-- **Ingress**: Ingress resource created, nginx controller routes traffic, gateways accessible via paths
+- **Ingress**: Envoy Gateway routes traffic via HTTPRoute/GRPCRoute, gateways accessible via external IP
 - **ClusterIP**: Services remain internal-only, verified via port-forwarding
+- **Ingress with cert-manager**: cert-manager installation, ClusterIssuer and Certificate resource creation
 
-Tests are excluded from regular test runs (use `-tags=e2e`). Each test creates a kind cluster, installs required components, and verifies actual HTTP connectivity.
+Tests are excluded from regular test runs (use `-tags=e2e`). Each test creates a Kind cluster, calls production `KubernetesManager` methods, and verifies actual HTTP/gRPC connectivity.
 
 ## Development
 

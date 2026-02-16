@@ -35,6 +35,12 @@ load-images:
 	kind load docker-image frkr-ingest-gateway:0.1.0 --name frkr-dev
 	kind load docker-image frkr-streaming-gateway:0.1.0 --name frkr-dev
 	kind load docker-image frkr-operator:0.1.1 --name frkr-dev
+	docker pull busybox
+	docker pull postgres:15-alpine
+	docker pull docker.redpanda.com/redpandadata/redpanda:latest
+	kind load docker-image busybox --name frkr-dev
+	kind load docker-image postgres:15-alpine --name frkr-dev
+	kind load docker-image docker.redpanda.com/redpandadata/redpanda:latest --name frkr-dev
 
 	@echo "Resolving frkr-common path and syncing migrations..."
 	@COMMON_PATH=$$(go list -m -f '{{.Dir}}' github.com/frkr-io/frkr-common 2>/dev/null) || \

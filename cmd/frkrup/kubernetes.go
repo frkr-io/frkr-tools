@@ -36,9 +36,9 @@ func (km *KubernetesManager) Setup() error {
 	}
 	fmt.Printf("Using cluster: %s\n", km.config.K8sClusterName)
 
-	// 3. Build and Load Images (if Kind)
+	// 3. Build and Load Images
 	updatedImages := make(map[string]bool)
-	if isKindCluster() { // simplified check, logic in main/prompt moved here? No, stick to config.
+	if km.config.ImageLoadCommand != "" {
 		var err error
 		updatedImages, err = km.buildAndLoadImages()
 		if err != nil {
@@ -53,11 +53,28 @@ func (km *KubernetesManager) Setup() error {
 		}
 	}
 
-	// 4. Install K8s Gateway API CRDs (must be done BEFORE Helm)
-	// Note: Helm hooks can't install CRDs that are referenced in the same chart
-	// because Helm validates all templates before running hooks
+	// 4. Install K8s Gateway API CRDs (must be done BEFORE Helm and BEFORE Envoy Gateway)
+	// kubectl apply is idempotent and uses client-side apply, so it never conflicts
+	// with prior installs regardless of who created the CRDs.
 	if err := km.installGatewayAPICRDs(); err != nil {
 		return err
+	}
+
+	// 5. Install Envoy Gateway controller (if ingress mode)
+	// Uses --skip-crds because CRDs are already installed above via kubectl.
+	if km.config.ExternalAccess == "ingress" {
+		if err := km.installEnvoyGateway(); err != nil {
+			return err
+		}
+	}
+
+	// 5b. Install cert-manager (if TLS is requested)
+	// Installed as a separate Helm release so the controller is running
+	// before ClusterIssuer/Certificate CRs are applied by the main chart.
+	if km.config.InstallCertManager {
+		if err := km.installCertManager(); err != nil {
+			return err
+		}
 	}
 
 	// 6. Install/Upgrade Helm Chart
@@ -100,36 +117,27 @@ func (km *KubernetesManager) checkPrerequisites() error {
 }
 
 func (km *KubernetesManager) determineClusterName() error {
-	// Get current context
 	ctxCmd := exec.Command("kubectl", "config", "current-context")
 	ctxOutput, err := ctxCmd.Output()
-	currentCtx := strings.TrimSpace(string(ctxOutput))
-	
 	if err != nil {
 		return fmt.Errorf("failed to get current kubernetes context: %w", err)
 	}
+	currentCtx := strings.TrimSpace(string(ctxOutput))
 
-	// 1. If config has a name, VALIDATE it
 	if km.config.K8sClusterName != "" {
 		if currentCtx != km.config.K8sClusterName {
-			return fmt.Errorf("context mismatch!\n   Active Context: %s\n   Configured Cluster: %s\n\n👉 Please switch your kubectl context:\n   kubectl config use-context %s", 
+			return fmt.Errorf("context mismatch!\n   Active Context: %s\n   Configured Cluster: %s\n\n👉 Please switch your kubectl context:\n   kubectl config use-context %s",
 				currentCtx, km.config.K8sClusterName, km.config.K8sClusterName)
 		}
 		return nil
 	}
 
-	// 2. If config has NO name, use current context (Auto-discovery)
-	if strings.HasPrefix(currentCtx, "kind-") {
-		km.config.K8sClusterName = strings.TrimPrefix(currentCtx, "kind-")
-	} else {
-		km.config.K8sClusterName = currentCtx
-	}
-	// Update config so other parts know the name
+	km.config.K8sClusterName = currentCtx
 	return nil
 }
 
 func (km *KubernetesManager) buildAndLoadImages() (map[string]bool, error) {
-	fmt.Println("\n📦 Building and loading images for Kind...")
+	fmt.Println("\n📦 Building and loading images into cluster...")
 	updated := make(map[string]bool)
 
 	// Ingest Gateway
@@ -151,23 +159,31 @@ func (km *KubernetesManager) buildAndLoadImages() (map[string]bool, error) {
 	// Operator
 	p, err = findGatewayRepoPath("operator")
 	if err == nil {
-		upd, err := km.buildAndLoadImage(p, "frkr-operator:0.1.1") // Keep version in sync
+		upd, err := km.buildAndLoadImage(p, "frkr-operator:0.1.1")
 		if err != nil { return nil, err }
 		updated["frkr-operator"] = upd
 	}
-	
-	// Mock OIDC (optional, checking if we can build it? No, it uses public image usually)
-	
+
+	// Pre-load infrastructure images so the cluster doesn't pull them at deploy time.
+	// frkrup always deploys with values-full.yaml which provisions postgres and redpanda,
+	// so we always need these regardless of the db_host/broker_host config values.
+	infraImages := []string{
+		"busybox",
+		"postgres:15-alpine",
+		"docker.redpanda.com/redpandadata/redpanda:latest",
+	}
+	if err := km.pullAndLoadImages(infraImages); err != nil {
+		return nil, err
+	}
+
 	return updated, nil
 }
 
 func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, error) {
-	// 0. Get current ID
 	oldIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
 	oldIDBytes, _ := oldIDCmd.Output()
 	oldID := strings.TrimSpace(string(oldIDBytes))
 
-	// 1. Build
 	fmt.Printf("  Building %s...\n", imageName)
 	dockerfile := filepath.Join(path, "Dockerfile")
 	cmd := exec.Command("docker", "build", "-t", imageName, "-f", dockerfile, path)
@@ -177,7 +193,6 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, er
 		return false, fmt.Errorf("build failed: %w", err)
 	}
 
-	// 2. Get New ID
 	newIDCmd := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", imageName)
 	newIDBytes, _ := newIDCmd.Output()
 	newID := strings.TrimSpace(string(newIDBytes))
@@ -187,14 +202,43 @@ func (km *KubernetesManager) buildAndLoadImage(path, imageName string) (bool, er
 		fmt.Printf("  ✅ Image %s is up to date\n", imageName)
 	}
 
-	// 3. Load into Kind
-	fmt.Printf("  Loading %s into %s...\n", imageName, km.config.K8sClusterName)
-	cmd = exec.Command("kind", "load", "docker-image", imageName, "--name", km.config.K8sClusterName)
-	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("kind load failed: %w", err)
+	fmt.Printf("  Loading %s into cluster...\n", imageName)
+	loadCmd := exec.Command("sh", "-c", km.config.ImageLoadCommand+" '"+imageName+"'")
+	loadCmd.Stdout = os.Stdout
+	loadCmd.Stderr = os.Stderr
+	if err := loadCmd.Run(); err != nil {
+		return false, fmt.Errorf("image load failed (command: %s): %w", km.config.ImageLoadCommand, err)
 	}
 
 	return hasChanged, nil
+}
+
+// pullAndLoadImages pulls pre-built images from a registry and loads them into
+// the cluster using the configured image_load_command. This ensures infrastructure
+// images (postgres, redpanda, busybox) are available without in-cluster pulls.
+func (km *KubernetesManager) pullAndLoadImages(images []string) error {
+	if len(images) == 0 {
+		return nil
+	}
+	fmt.Println("  Pre-loading infrastructure images...")
+	for _, img := range images {
+		fmt.Printf("    Pulling %s...\n", img)
+		pullCmd := exec.Command("docker", "pull", img)
+		pullCmd.Stdout = os.Stdout
+		pullCmd.Stderr = os.Stderr
+		if err := pullCmd.Run(); err != nil {
+			return fmt.Errorf("failed to pull %s: %w", img, err)
+		}
+
+		fmt.Printf("    Loading %s into cluster...\n", img)
+		loadCmd := exec.Command("sh", "-c", km.config.ImageLoadCommand+" '"+img+"'")
+		loadCmd.Stdout = os.Stdout
+		loadCmd.Stderr = os.Stderr
+		if err := loadCmd.Run(); err != nil {
+			return fmt.Errorf("failed to load %s (command: %s): %w", img, km.config.ImageLoadCommand, err)
+		}
+	}
+	return nil
 }
 
 // PushImages builds images and pushes them to the configured registry
@@ -255,33 +299,56 @@ func (km *KubernetesManager) PushImages() (map[string]bool, error) {
 func (km *KubernetesManager) waitForReadiness() error {
 	fmt.Println("\n⏳ Waiting for stack to be ready...")
 
-	// 1. Wait for Operator (Ensures CRDs are respected)
+	// 1. Wait for Operator
 	fmt.Print("   Waiting for Operator... ")
-	exec.Command("kubectl", "wait", "--for=condition=available", "deployment/frkr-operator", "--timeout=120s").Run()
+	if err := km.retryKubectlWait(120*time.Second,
+		"--for=condition=available", "deployment/frkr-operator", "--timeout=60s"); err != nil {
+		fmt.Println("❌")
+		return fmt.Errorf("operator not ready: %w", err)
+	}
 	fmt.Println("✅")
 
 	// 2. Wait for FrkrInit (Migrations)
+	// The FrkrInit CR is created by the operator after it starts, so it may
+	// not exist immediately. retryKubectlWait handles the not-found race.
 	fmt.Print("   Waiting for Migrations (FrkrInit)... ")
-	cmd := exec.Command("kubectl", "wait", "--for=condition=Ready", "frkrinit/frkr-init", "--timeout=300s")
-	if err := cmd.Run(); err != nil {
+	if err := km.retryKubectlWait(120*time.Second,
+		"--for=condition=Ready", "frkrinit/frkr-init", "--timeout=60s"); err != nil {
 		fmt.Println("❌ Failed (check operator logs)")
-		return fmt.Errorf("migrations failed")
+		return fmt.Errorf("migrations failed: %w", err)
 	}
 	fmt.Println("✅")
 
 	// 3. Wait for DataPlane
-	// If this is ready, it means database and brokers are connected and ready
 	fmt.Print("   Waiting for DataPlane... ")
-	if err := exec.Command("kubectl", "wait", "--for=condition=Ready", "frkrdataplane/frkr-dataplane", "--timeout=300s").Run(); err != nil {
+	if err := km.retryKubectlWait(120*time.Second,
+		"--for=condition=Ready", "frkrdataplane/frkr-dataplane", "--timeout=60s"); err != nil {
 		fmt.Println("⚠️  Timed out waiting for DataPlane Ready state.")
 	} else {
 		fmt.Println("✅")
 	}
-    
-    // We trust that if DataPlane is ready, the system is usable.
-    // Individual gateway deployment waits are removed as they are managed by the chart/GitOps eventually.
-    
+
 	return nil
+}
+
+// retryKubectlWait runs "kubectl wait" in a retry loop. kubectl wait exits
+// immediately with an error when the target resource doesn't exist yet
+// ("not found" / "no matching resources"). This loop re-issues the command
+// until it succeeds or the deadline expires, handling the race between
+// resource creation and readiness polling.
+func (km *KubernetesManager) retryKubectlWait(deadline time.Duration, args ...string) error {
+	end := time.Now().Add(deadline)
+	for {
+		cmd := exec.Command("kubectl", append([]string{"wait"}, args...)...)
+		if cmd.Run() == nil {
+			return nil
+		}
+		if time.Now().After(end) {
+			return fmt.Errorf("timed out after %v waiting for: kubectl wait %s",
+				deadline, strings.Join(args, " "))
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 func (km *KubernetesManager) runPortForwarding() error {
@@ -326,7 +393,13 @@ func startPortForward(target, ports, address string) {
 func (km *KubernetesManager) showSuccessMessage() {
 	if km.config.SkipPortForward {
 		fmt.Println("\n✅ frkr is deployed!")
-		fmt.Println("   Run 'kubectl get svc' to see external IPs.")
+		if km.config.ExternalAccess == "ingress" {
+			fmt.Println("   Envoy Gateway is routing external traffic.")
+			fmt.Println("   Run 'kubectl get svc -n envoy-gateway-system' to see the external IP.")
+		} else {
+			fmt.Println("   Services are ClusterIP only (no external access configured).")
+			fmt.Println("   Use 'kubectl port-forward' for local access.")
+		}
 	}
 }
 
@@ -349,6 +422,7 @@ func (km *KubernetesManager) installGatewayAPICRDs() error {
 	waitCmd := exec.Command("kubectl", "wait", "--for=condition=Established", 
 		"crd/gateways.gateway.networking.k8s.io",
 		"crd/httproutes.gateway.networking.k8s.io",
+		"crd/grpcroutes.gateway.networking.k8s.io",
 		"--timeout=60s")
 	if err := waitCmd.Run(); err != nil {
 		fmt.Println("⚠️")
@@ -359,4 +433,114 @@ func (km *KubernetesManager) installGatewayAPICRDs() error {
 	
 	fmt.Println("✅ K8s Gateway API CRDs installed")
 	return nil
+}
+
+// installEnvoyGateway installs the Envoy Gateway controller via Helm.
+// The controller watches Gateway API resources (Gateway, HTTPRoute, GRPCRoute)
+// and creates Envoy proxy pods + LoadBalancer services to serve traffic.
+// Without it, the Gateway resources created by the frkr Helm chart are inert.
+//
+// Uses --skip-crds because installGatewayAPICRDs() has already installed them
+// via kubectl apply. This avoids Helm SSA conflicts with kubectl-owned CRDs.
+func (km *KubernetesManager) installEnvoyGateway() error {
+	fmt.Println("\n🚪 Installing Envoy Gateway controller...")
+
+	// Check if already installed via Helm
+	check := exec.Command("helm", "status", "eg", "-n", "envoy-gateway-system")
+	if check.Run() == nil {
+		fmt.Println("✅ Envoy Gateway already installed")
+		return nil
+	}
+
+	cmd := exec.Command("helm", "upgrade", "--install", "eg",
+		"oci://docker.io/envoyproxy/gateway-helm",
+		"--version", "v1.2.4",
+		"-n", "envoy-gateway-system",
+		"--create-namespace",
+		"--skip-crds",
+		"--wait",
+		"--timeout", "120s")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install Envoy Gateway: %w", err)
+	}
+
+	fmt.Println("✅ Envoy Gateway controller installed")
+	return nil
+}
+
+// installCertManager installs cert-manager via Helm as a separate release.
+// Installed independently (not as a subchart) to avoid SSA conflicts with
+// cloud admission enforcers (e.g. AKS admissionsenforcer) and to ensure
+// the controller is running before ClusterIssuer/Certificate CRs are applied.
+func (km *KubernetesManager) installCertManager() error {
+	fmt.Println("\n🔐 Installing cert-manager...")
+
+	// Fast path: if the release exists AND CRDs are present, skip.
+	// We check CRDs explicitly because a failed migration (subchart → standalone)
+	// can leave the release intact but CRDs deleted.
+	releaseExists := exec.Command("helm", "status", "cert-manager", "-n", "cert-manager").Run() == nil
+	crdsExist := exec.Command("kubectl", "get", "crd", "certificates.cert-manager.io").Run() == nil
+	if releaseExists && crdsExist {
+		fmt.Println("✅ cert-manager already installed")
+		return nil
+	}
+
+	// Adopt any existing cert-manager CRDs that may be owned by a previous
+	// Helm release (e.g. when cert-manager was a subchart of "frkr").
+	km.adoptCertManagerCRDs()
+
+	// Ensure the jetstack Helm repo is available (needed before installHelmChart
+	// calls ensureHelmRepos).
+	exec.Command("helm", "repo", "add", "jetstack", "https://charts.jetstack.io").Run()
+
+	cmd := exec.Command("helm", "upgrade", "--install", "cert-manager",
+		"jetstack/cert-manager",
+		"--version", "v1.14.0",
+		"-n", "cert-manager",
+		"--create-namespace",
+		"--set", "installCRDs=true",
+		"--set", "featureGates=ExperimentalGatewayAPISupport=true",
+		"--force",
+		"--wait",
+		"--timeout", "120s")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install cert-manager: %w", err)
+	}
+
+	fmt.Println("✅ cert-manager installed")
+	return nil
+}
+
+// adoptCertManagerCRDs relabels any existing cert-manager CRDs so they are
+// owned by the standalone "cert-manager" Helm release in the "cert-manager"
+// namespace. This handles migration from the old subchart-based install where
+// the CRDs were owned by the "frkr" release in "default".
+// The resource-policy annotation prevents the subsequent "frkr" Helm upgrade
+// from deleting the CRDs when it detects they are no longer in the chart.
+func (km *KubernetesManager) adoptCertManagerCRDs() {
+	crds := []string{
+		"certificaterequests.cert-manager.io",
+		"certificates.cert-manager.io",
+		"challenges.acme.cert-manager.io",
+		"clusterissuers.cert-manager.io",
+		"issuers.cert-manager.io",
+		"orders.acme.cert-manager.io",
+	}
+	for _, crd := range crds {
+		if exec.Command("kubectl", "get", "crd", crd).Run() != nil {
+			continue
+		}
+		exec.Command("kubectl", "annotate", "crd", crd,
+			"meta.helm.sh/release-name=cert-manager",
+			"meta.helm.sh/release-namespace=cert-manager",
+			"helm.sh/resource-policy=keep",
+			"--overwrite").Run()
+		exec.Command("kubectl", "label", "crd", crd,
+			"app.kubernetes.io/managed-by=Helm",
+			"--overwrite").Run()
+	}
 }

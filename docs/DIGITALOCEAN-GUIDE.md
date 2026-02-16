@@ -37,19 +37,13 @@ We will use `frkrup` in **non-interactive mode** to automate the entire setup, i
     
     # Production Settings
     skip_port_forward: true
-    external_access: loadbalancer
+    external_access: ingress
     
     # Automated TLS Infrastructure
     install_cert_manager: true
     cert_manager_email: "your-email@example.com"
-    
-    # Advanced: Customize Issuer/Ingress (Defaults shown)
-    # cert_issuer_name: "letsencrypt-prod"
-    # ingress_class_name: "envoy"
-    
-    # Gateway Configuration
-    ingest_port: 8080
-    streaming_port: 8081
+    # ingress_host: "frkr.example.com"  # Set after getting the external IP
+    # ingress_tls_secret: frkr-tls
     ```
 
 2.  **Run Deployment**:
@@ -59,10 +53,10 @@ We will use `frkrup` in **non-interactive mode** to automate the entire setup, i
     ```
 
     **What `frkrup` does for you:**
-    - **Infrastructure**: Installs Gateway API CRDs, Envoy Gateway, and **Cert-Manager** (v1.14.4).
-    - **TLS Setup**: Configures a Let's Encrypt Production **ClusterIssuer** using your email.
+    - **Infrastructure**: Installs Gateway API CRDs, Envoy Gateway, and cert-manager.
+    - **TLS Setup**: Creates a `ClusterIssuer` and `Certificate` resource via the Helm chart.
     - **App Deployment**: Deploys all `frkr` components.
-    - **Networking**: Provisions a DigitalOcean LoadBalancer.
+    - **Networking**: Provisions a DigitalOcean LoadBalancer via the Envoy Gateway.
 
 3.  **Wait for IP**:
     `frkrup` will wait until DigitalOcean assigns an external IP address and print it out.
@@ -76,8 +70,8 @@ It explains how to use:
 *   **Custom Domains** for production.
 
 **Briefly**:
-1.  Get your LoadBalancer IP (`kubectl get svc`).
-2.  Update `frkrup.yaml` with `external_access: ingress` and `install_cert_manager: true`.
+1.  Get the Envoy Gateway external IP (`kubectl get svc -n envoy-gateway-system`).
+2.  Add `ingress_host`, `ingress_tls_secret`, and TLS settings to your `frkrup.yaml`.
 3.  Run `frkrup` again.
 
 ## Step 5: Verification

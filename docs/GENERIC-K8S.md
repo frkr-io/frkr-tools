@@ -26,8 +26,8 @@ Create a configuration file. Note that `k8s_cluster_name` is used for **Safety V
 k8s: true
 k8s_cluster_name: "my-production-cluster-name" # MUST match 'kubectl config current-context'
 
-# Networking
-external_access: "loadbalancer"
+# Networking: "ingress" for Envoy Gateway (recommended), or omit for ClusterIP + port-forward
+external_access: "ingress"
 
 # Database
 db_host: "frkr-db"
@@ -38,6 +38,8 @@ db_name: "frkr"
 # oidc_issuer: "https://accounts.google.com"
 # oidc_client_id: "..."
 ```
+
+> For TLS/HTTPS, see the [TLS Setup Guide](TLS-SETUP.md).
 
 ## 3. Deployment
 
@@ -51,7 +53,9 @@ The installer will:
 1.  Validate your context match.
 2.  Check for stale data collisions (safety check).
 3.  Install Gateway API CRDs.
-4.  Deploy the Helm Chart.
+4.  Install Envoy Gateway controller (if `external_access: ingress`).
+5.  Install cert-manager (if `install_cert_manager: true`).
+6.  Deploy the frkr Helm chart.
 
 ## Troubleshooting
 

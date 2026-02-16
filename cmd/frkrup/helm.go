@@ -232,17 +232,16 @@ func (km *KubernetesManager) generateValuesFile(path string) error {
 
 	// Add external access config
 	switch km.config.ExternalAccess {
-	case "loadbalancer":
-		values["ingestGateway"] = map[string]interface{}{
-			"service": map[string]interface{}{"type": "LoadBalancer"},
-		}
-		values["streamingGateway"] = map[string]interface{}{
-			"service": map[string]interface{}{"type": "LoadBalancer"},
-		}
 	case "ingress":
 		ingress := map[string]interface{}{}
 		if km.config.IngressHost != "" {
 			ingress["host"] = km.config.IngressHost
+		}
+		if km.config.IngestIngressHost != "" {
+			ingress["ingestHost"] = km.config.IngestIngressHost
+		}
+		if km.config.StreamingIngressHost != "" {
+			ingress["streamingHost"] = km.config.StreamingIngressHost
 		}
 		
 		// TLS Configuration
@@ -256,13 +255,6 @@ func (km *KubernetesManager) generateValuesFile(path string) error {
 			ingress["tls"] = tls
 		}
 		
-		// Cert Manager Annotations
-		if km.config.InstallCertManager {
-			ingress["annotations"] = map[string]string{
-				"cert-manager.io/cluster-issuer": km.config.CertIssuerName,
-			}
-		}
-		
 		values["ingress"] = ingress
 	}
 
@@ -274,7 +266,13 @@ func (km *KubernetesManager) generateValuesFile(path string) error {
 	}
 
 	if km.config.InstallCertManager {
-		values["platform"].(map[string]interface{})["certManager"].(map[string]interface{})["install"] = true
+		platform := values["platform"].(map[string]interface{})
+		platform["certManager"] = map[string]interface{}{
+			"install":      true,
+			"email":        km.config.CertManagerEmail,
+			"issuerName":   km.config.CertIssuerName,
+			"issuerServer": km.config.CertIssuerServer,
+		}
 	}
 
 	// Marshal to YAML

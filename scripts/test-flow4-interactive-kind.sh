@@ -30,6 +30,12 @@ echo "Creating Kind cluster..." | tee -a "$PROOF_FILE"
 kind create cluster --name frkr-dev
 sleep 15
 
+echo "Building and loading images into Kind cluster..." | tee -a "$PROOF_FILE"
+cd "$SCRIPT_DIR/.."
+make docker-build 2>&1 | tail -5
+make load-images 2>&1 | tail -10
+echo "✅ Images loaded" | tee -a "$PROOF_FILE"
+
 echo "Starting frkrup interactively for K8s..." | tee -a "$PROOF_FILE"
 cd "$SCRIPT_DIR"
 expect << 'EOF' > /tmp/flow4-frkrup.log 2>&1 &

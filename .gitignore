@@ -1,7 +1,8 @@
-# Binaries (root level - should be in bin/)
+# Binaries
 /frkrcfg
 /migrate
 /frkrup
+cmd/frkrup/frkrup
 *.exe
 *.exe~
 *.dll

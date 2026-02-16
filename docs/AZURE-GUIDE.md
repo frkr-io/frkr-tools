@@ -89,12 +89,10 @@ k8s_cluster_name: "frkr-aks"
 # Registry (Required for AKS) - From Terraform output
 image_registry: "frkrcrx....azurecr.io"
 
-# Option A: Standard LoadBalancer (L4, HTTP only)
-external_access: "loadbalancer"
-
-# Option B: Managed Ingress with TLS (L7, HTTPS)
-# external_access: "ingress"
-# ingress_host: "frkr.example.com" # Or Use 1.2.3.4.sslip.io after getting IP
+# Ingress with TLS (Envoy Gateway + cert-manager)
+external_access: "ingress"
+# ingress_host: "frkr.example.com"    # Set after getting the external IP (see TLS-SETUP.md)
+# ingress_tls_secret: frkr-tls
 # install_cert_manager: true
 # cert_manager_email: "you@example.com"
 
@@ -106,6 +104,8 @@ oidc_issuer: "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0"
 oidc_client_id: "YOUR_APP_CLIENT_ID"
 oidc_client_secret: "YOUR_CLIENT_SECRET"
 ```
+
+> For TLS/HTTPS configuration (including sslip.io for quick testing), see the [TLS Setup Guide](TLS-SETUP.md).
 
 Run the deployment:
 

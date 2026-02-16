@@ -38,19 +38,11 @@ func promptConfig() (*FrkrupConfig, error) {
 	}
 
 	if config.K8s {
-		// Auto-detect if we're in a kind cluster
-		isKindCluster := isKindCluster()
-		
-		// Auto-detect port forwarding need (default to yes for kind, no for managed)
-		if isKindCluster {
-			fmt.Print("Use port forwarding for local access? (yes/no) [yes]: ")
-		} else {
-			fmt.Print("Use port forwarding for local access? (yes/no) [no]: ")
-		}
+		fmt.Print("Use port forwarding for local access? (yes/no) [yes]: ")
 		scanner.Scan()
 		answer = strings.ToLower(strings.TrimSpace(scanner.Text()))
 		if answer == "" {
-			config.SkipPortForward = !isKindCluster // Default: yes for kind, no for managed
+			config.SkipPortForward = false
 		} else {
 			config.SkipPortForward = answer == "no" || answer == "n"
 		}
@@ -59,8 +51,8 @@ func promptConfig() (*FrkrupConfig, error) {
 		if config.SkipPortForward {
 			fmt.Println("\n📡 External Access Configuration:")
 			fmt.Println("   How should gateways be exposed externally?")
-			fmt.Println("   1. LoadBalancer (cloud providers - EKS, GKE, AKS)")
-			fmt.Println("   2. Ingress (requires Ingress controller)")
+			fmt.Println("   1. Ingress - single hostname (e.g., frkr.example.com)")
+			fmt.Println("   2. Ingress - per-service subdomains (e.g., ingest.frkr.example.com)")
 			fmt.Println("   3. None (ClusterIP only, internal access)")
 			fmt.Print("   Choose option (1/2/3) [1]: ")
 			scanner.Scan()
@@ -71,14 +63,29 @@ func promptConfig() (*FrkrupConfig, error) {
 
 			switch choice {
 			case "1":
-				config.ExternalAccess = "loadbalancer"
-			case "2":
 				config.ExternalAccess = "ingress"
 				fmt.Print("   Ingress hostname (e.g., frkr.example.com): ")
 				scanner.Scan()
 				config.IngressHost = strings.TrimSpace(scanner.Text())
 				if config.IngressHost == "" {
 					return nil, fmt.Errorf("ingress hostname is required")
+				}
+				fmt.Print("   TLS Secret Name (optional, press Enter to skip): ")
+				scanner.Scan()
+				config.IngressTLSSecret = strings.TrimSpace(scanner.Text())
+			case "2":
+				config.ExternalAccess = "ingress"
+				fmt.Print("   Ingest hostname (e.g., ingest.frkr.example.com): ")
+				scanner.Scan()
+				config.IngestIngressHost = strings.TrimSpace(scanner.Text())
+				if config.IngestIngressHost == "" {
+					return nil, fmt.Errorf("ingest hostname is required for subdomain routing")
+				}
+				fmt.Print("   Streaming hostname (e.g., stream.frkr.example.com): ")
+				scanner.Scan()
+				config.StreamingIngressHost = strings.TrimSpace(scanner.Text())
+				if config.StreamingIngressHost == "" {
+					return nil, fmt.Errorf("streaming hostname is required for subdomain routing")
 				}
 				fmt.Print("   TLS Secret Name (optional, press Enter to skip): ")
 				scanner.Scan()
@@ -281,25 +288,9 @@ func generateDefaultConfig() (*FrkrupConfig, error) {
 	// Auto-detect K8s
 	if isKubernetesAvailable() {
 		config.K8s = true
-		
-		// Auto-detect Kind
-		isKind := isKindCluster()
-		
-		// Default port forwarding logic
-		if isKind {
-			config.SkipPortForward = false // Use port forwarding for Kind
-		} else {
-			config.SkipPortForward = true  // No port forwarding for others
-		}
+		config.SkipPortForward = false
+		config.ExternalAccess = "none"
 
-		if config.SkipPortForward {
-			// specific defaults for non-port-forward
-			config.ExternalAccess = "loadbalancer" // Default choice
-		} else {
-			config.ExternalAccess = "none"
-		}
-
-		// K8s defaults
 		config.DBHost = "localhost"
 		config.BrokerHost = "localhost"
 

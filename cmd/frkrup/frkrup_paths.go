@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	frkrcommonpaths "github.com/frkr-io/frkr-common/paths"
 )
@@ -22,24 +21,6 @@ func isKubernetesAvailable() bool {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	return cmd.Run() == nil
-}
-
-// isKindCluster checks if the current kubectl context is a kind cluster
-func isKindCluster() bool {
-	if _, err := exec.LookPath("kubectl"); err != nil {
-		return false
-	}
-	
-	// Get current context
-	cmd := exec.Command("kubectl", "config", "current-context")
-	output, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	
-	ctxStr := strings.TrimSpace(string(output))
-	// Kind clusters typically have context names starting with "kind-"
-	return strings.HasPrefix(ctxStr, "kind-")
 }
 
 // findMigrationsPath uses frkr-common/paths package to find migrations directory

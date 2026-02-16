@@ -72,13 +72,15 @@ You can now use `frkrup` to deploy to this cluster. Create a `frkrup.yaml`:
 ```yaml
 k8s: true
 k8s_cluster_name: "frkr-cluster"
-external_access: "loadbalancer" # Uses DigitalOcean LB
+external_access: "ingress"  # Envoy Gateway (provisions DO LoadBalancer automatically)
 
 # OIDC Configuration (Optional but Recommended)
 oidc_issuer: "https://idp.example.com/"
 oidc_client_id: "your-client-id"
 oidc_client_secret: "your-client-secret"
 ```
+
+> For TLS/HTTPS, see the [TLS Setup Guide](TLS-SETUP.md).
 
 Run the deployment:
 
@@ -93,7 +95,7 @@ frkrup --config frkrup.yaml
 helm install frkr frkr/frkr-stack
 ```
 
-*Note: The DigitalOcean LoadBalancer will be automatically provisioned when the Ingress Controller requests a Service of type `LoadBalancer`.*
+*Note: The DigitalOcean LoadBalancer is automatically provisioned when the Envoy Gateway creates a Service of type `LoadBalancer`.*
 
 ## Clean Up
 
